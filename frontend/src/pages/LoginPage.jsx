@@ -60,48 +60,49 @@ export default function LoginPage() {
         </div>
 
         {/* Card */}
-        <div className="glass rounded-3xl p-8 shadow-2xl border border-white/10">
-          <h2 className="text-xl font-semibold text-white mb-6">Sign in to your account</h2>
+        <div className="bg-white rounded-3xl p-8 shadow-2xl shadow-slate-950/50 border border-slate-100">
+          <h2 className="text-2xl font-bold text-slate-900 mb-1">Sign in to your account</h2>
+          <p className="text-sm text-slate-500 mb-6">Enter your credentials to access your dashboard</p>
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
             <div>
-              <label className="block text-sm font-medium text-blue-100 mb-1.5">Email Address</label>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Email Address</label>
               <input
                 {...register('email')}
                 type="email"
                 autoComplete="email"
                 placeholder="admin@company.com"
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2.5
-                           text-white placeholder:text-white/40 text-sm
-                           focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent
+                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5
+                           text-slate-900 placeholder:text-slate-400 text-sm
+                           focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent focus:bg-white
                            transition-all"
               />
-              {errors.email && <p className="text-xs text-red-400 mt-1">{errors.email.message}</p>}
+              {errors.email && <p className="text-xs text-red-500 font-medium mt-1">{errors.email.message}</p>}
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-blue-100 mb-1.5">Password</label>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Password</label>
               <input
                 {...register('password')}
                 type="password"
                 autoComplete="current-password"
                 placeholder="••••••••"
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2.5
-                           text-white placeholder:text-white/40 text-sm
-                           focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent
+                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5
+                           text-slate-900 placeholder:text-slate-400 text-sm
+                           focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent focus:bg-white
                            transition-all"
               />
-              {errors.password && <p className="text-xs text-red-400 mt-1">{errors.password.message}</p>}
+              {errors.password && <p className="text-xs text-red-500 font-medium mt-1">{errors.password.message}</p>}
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-blue-500 to-violet-600
+              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600
                          text-white font-semibold text-sm shadow-lg shadow-blue-500/30
-                         hover:shadow-blue-500/50 hover:scale-[1.02]
-                         active:scale-[0.98] transition-all duration-200
-                         disabled:opacity-50 disabled:scale-100 flex items-center justify-center gap-2"
+                         hover:shadow-blue-500/50 hover:scale-[1.01]
+                         active:scale-[0.99] transition-all duration-200
+                         disabled:opacity-50 disabled:scale-100 flex items-center justify-center gap-2 cursor-pointer"
             >
               {loading ? (
                 <>
@@ -112,7 +113,7 @@ export default function LoginPage() {
             </button>
           </form>
 
-          <p className="mt-6 text-center text-xs text-white/40">
+          <p className="mt-6 text-center text-xs text-slate-400">
             Protected by role-based access control • v1.0.0
           </p>
         </div>
