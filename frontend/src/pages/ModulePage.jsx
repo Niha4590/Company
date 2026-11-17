@@ -154,69 +154,118 @@ function StudentsModule() {
 }
 
 // ─── COURSES & BATCHES PAGE ──────────────────────────────────
-const EMI_PLANS_DEF = [
-  { key: 'cash', label: 'Cash', fullName: 'Full Cash Payment', months: 1, badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-300' },
-  { key: 'emi_4', label: '4 EMI', fullName: '4 Months Installment', months: 4, badgeClass: 'bg-blue-50 text-blue-800 border-blue-300' },
-  { key: 'emi_6', label: '6 EMI', fullName: '6 Months Installment', months: 6, badgeClass: 'bg-indigo-50 text-indigo-800 border-indigo-300' },
-  { key: 'emi_8', label: '8 EMI', fullName: '8 Months Installment', months: 8, badgeClass: 'bg-purple-50 text-purple-800 border-purple-300' },
-  { key: 'emi_15', label: '15 EMI', fullName: '15 Months Installment', months: 15, badgeClass: 'bg-amber-50 text-amber-800 border-amber-300' },
-];
+const GST_PERCENT = 18;
+const EMI_MONTHS_LIST = [4, 6, 8, 15];
+
+function calculateFeeDetails(baseAmount, allowedPlans) {
+  const base = Math.max(0, Number(baseAmount) || 0);
+  const gst = Math.round(base * (GST_PERCENT / 100));
+  const total = base + gst;
+
+  const cash = {
+    key: 'cash',
+    label: 'Cash',
+    fullName: 'Full Cash Payment',
+    months: 1,
+    baseAmount: base,
+    gstAmount: gst,
+    totalAmount: total,
+    installmentAmount: total,
+    badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-300',
+  };
+
+  const allEmiPlans = EMI_MONTHS_LIST.map(months => {
+    const installmentTotal = Math.round(total / months);
+    const installmentBase = Math.round(base / months);
+    const installmentGst = installmentTotal - installmentBase;
+    return {
+      key: `emi_${months}`,
+      months,
+      label: `${months} EMI`,
+      fullName: `${months} Months EMI Plan`,
+      baseAmount: base,
+      gstAmount: gst,
+      totalAmount: total,
+      installmentTotal,
+      installmentBase,
+      installmentGst,
+      badgeClass:
+        months === 4 ? 'bg-blue-50 text-blue-800 border-blue-300' :
+        months === 6 ? 'bg-indigo-50 text-indigo-800 border-indigo-300' :
+        months === 8 ? 'bg-purple-50 text-purple-800 border-purple-300' :
+        'bg-amber-50 text-amber-800 border-amber-300',
+    };
+  });
+
+  const emiOptions = allowedPlans && allowedPlans.length > 0
+    ? allEmiPlans.filter(p => allowedPlans.includes(p.key) || allowedPlans.includes(String(p.months)))
+    : allEmiPlans;
+
+  return {
+    base,
+    gst,
+    total,
+    cash,
+    allEmiPlans,
+    emiOptions: emiOptions.length > 0 ? emiOptions : allEmiPlans,
+  };
+}
 
 function parseCoursePlans(description) {
-  if (!description) return ['cash', 'emi_4', 'emi_6', 'emi_8', 'emi_15'];
-  const match = description.match(/\[plans:([^\]]+)\]/);
+  if (!description) return ['emi_4', 'emi_6', 'emi_8', 'emi_15'];
+  const match = description.match(/\[emi_plans:([^\]]+)\]/);
   if (match && match[1]) {
     const list = match[1].split(',').filter(Boolean);
     if (list.length > 0) return list;
   }
-  return ['cash', 'emi_4', 'emi_6', 'emi_8', 'emi_15'];
+  return ['emi_4', 'emi_6', 'emi_8', 'emi_15'];
 }
 
 function stripPlansFromDesc(description) {
   if (!description) return '';
-  return description.replace(/\[plans:[^\]]+\]/g, '').trim();
+  return description.replace(/\[(plans|emi_plans):[^\]]+\]/g, '').trim();
 }
 
-function getCourseEMIBreakdown(totalFee, allowedKeys) {
-  const fee = Number(totalFee) || 0;
-  const keys = allowedKeys && allowedKeys.length > 0 ? allowedKeys : ['cash', 'emi_4', 'emi_6', 'emi_8', 'emi_15'];
-  return EMI_PLANS_DEF
-    .filter(p => keys.includes(p.key))
-    .map(p => ({
-      ...p,
-      installment: p.months === 1 ? fee : Math.round(fee / p.months),
-      total: fee,
-    }));
-}
+function PaymentOptionsCell({ fee, description, onOpenModal }) {
+  const base = Number(fee) || 0;
+  if (!base) return <span className="text-slate-400 text-xs">—</span>;
 
-function EMIPlanBadges({ fee, description, onOpenModal }) {
-  const amount = Number(fee) || 0;
-  if (!amount) return <span className="text-slate-400 text-xs">—</span>;
-  const plans = parseCoursePlans(description);
-  const items = getCourseEMIBreakdown(amount, plans);
+  const allowedEmi = parseCoursePlans(description);
+  const details = calculateFeeDetails(base, allowedEmi);
+  const minEmi = details.emiOptions[details.emiOptions.length - 1];
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 py-0.5">
-      {items.map(item => (
-        <span
-          key={item.key}
-          className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-md border ${item.badgeClass}`}
-          title={`${item.fullName}: ₹${item.installment.toLocaleString()}${item.months > 1 ? '/mo' : ''}`}
-        >
-          <span>{item.label}:</span>
-          <span className="font-bold">₹{item.installment.toLocaleString()}{item.months > 1 ? '/m' : ''}</span>
+    <div className="flex flex-col gap-1.5 py-1">
+      {/* 1. Cash Option */}
+      <div className="flex items-center gap-2">
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+          <span>Cash:</span>
+          <span className="font-bold">₹{details.cash.totalAmount.toLocaleString()}</span>
+          <span className="text-[10px] text-emerald-600 font-normal">(inc. 18% GST)</span>
         </span>
-      ))}
-      {onOpenModal && (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onOpenModal(); }}
-          className="text-xs text-blue-600 hover:text-blue-800 hover:underline font-semibold ml-1 cursor-pointer"
-          title="View detailed installment breakdown"
-        >
-          Details ➔
-        </button>
-      )}
+      </div>
+
+      {/* 2. EMI Option */}
+      <div className="flex items-center gap-2">
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-0.5 rounded-md bg-blue-50 text-blue-800 border border-blue-300">
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+          <span>EMI:</span>
+          <span className="font-normal text-blue-700">4, 6, 8, 15 Months</span>
+          <span className="font-bold text-blue-900">from ₹{minEmi?.installmentTotal.toLocaleString()}/mo</span>
+        </span>
+
+        {onOpenModal && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onOpenModal(); }}
+            className="text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+            title="View all EMI options and schedule breakdown"
+          >
+            All EMI Options ➔
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -235,7 +284,7 @@ function CoursesModule() {
     description: '',
     duration_months: 6,
     fee_amount: 0,
-    plans: ['cash', 'emi_4', 'emi_6', 'emi_8', 'emi_15'],
+    emiPlans: ['emi_4', 'emi_6', 'emi_8', 'emi_15'],
   });
   const [bForm, setBForm] = useState({ course_id: '', name: '', start_date: '', end_date: '', capacity: 30 });
 
@@ -250,7 +299,7 @@ function CoursesModule() {
     if (!cForm.name || !cForm.code) return toast.error('Name and Code are required');
     setSaving(true);
     try {
-      const plansTag = `[plans:${(cForm.plans || []).join(',')}]`;
+      const plansTag = `[emi_plans:${(cForm.emiPlans || []).join(',')}]`;
       const descPayload = cForm.description
         ? `${stripPlansFromDesc(cForm.description)}\n${plansTag}`
         : plansTag;
@@ -270,7 +319,7 @@ function CoursesModule() {
         description: '',
         duration_months: 6,
         fee_amount: 0,
-        plans: ['cash', 'emi_4', 'emi_6', 'emi_8', 'emi_15'],
+        emiPlans: ['emi_4', 'emi_6', 'emi_8', 'emi_15'],
       });
       const { data } = await studentApi.courses();
       setCourses(data.data || []);
@@ -299,6 +348,7 @@ function CoursesModule() {
   };
 
   const selectedCourseForBatch = courses.find(c => c.id === bForm.course_id);
+  const addCourseFeeDetails = calculateFeeDetails(cForm.fee_amount, cForm.emiPlans);
 
   return (
     <>
@@ -326,11 +376,26 @@ function CoursesModule() {
             )},
             { header: 'Code', key: 'code' },
             { header: 'Duration', render: (r) => `${r.duration_months} months` },
-            { header: 'Fee', render: (r) => <span className="font-bold text-slate-900">₹{Number(r.fee_amount || 0).toLocaleString()}</span> },
             {
-              header: 'Payment Options (Cash & EMI)',
+              header: 'Fee & 18% GST',
+              render: (r) => {
+                const details = calculateFeeDetails(r.fee_amount);
+                return (
+                  <div>
+                    <div className="font-bold text-slate-900 text-sm">
+                      ₹{details.total.toLocaleString()}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      Base: ₹{details.base.toLocaleString()} + 18% GST (₹{details.gst.toLocaleString()})
+                    </div>
+                  </div>
+                );
+              },
+            },
+            {
+              header: 'Payment Structure (Cash & EMI)',
               render: (r) => (
-                <EMIPlanBadges
+                <PaymentOptionsCell
                   fee={r.fee_amount}
                   description={r.description}
                   onOpenModal={() => setSelectedEmiCourse(r)}
@@ -349,13 +414,26 @@ function CoursesModule() {
             { header: 'Batch', render: (r) => <span className="font-semibold text-slate-800">{r.name}</span> },
             { header: 'Course', render: (r) => r.courses?.name || '—' },
             {
-              header: 'Fee',
-              render: (r) => r.courses?.fee_amount ? <span className="font-bold text-slate-900">₹{Number(r.courses.fee_amount).toLocaleString()}</span> : '—',
+              header: 'Fee & 18% GST',
+              render: (r) => {
+                if (!r.courses?.fee_amount) return '—';
+                const details = calculateFeeDetails(r.courses.fee_amount);
+                return (
+                  <div>
+                    <div className="font-bold text-slate-900 text-sm">
+                      ₹{details.total.toLocaleString()}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      Base: ₹{details.base.toLocaleString()} + 18% GST (₹{details.gst.toLocaleString()})
+                    </div>
+                  </div>
+                );
+              },
             },
             {
-              header: 'Payment Options (Cash & EMI)',
+              header: 'Payment Structure (Cash & EMI)',
               render: (r) => (
-                <EMIPlanBadges
+                <PaymentOptionsCell
                   fee={r.courses?.fee_amount}
                   description={r.courses?.description}
                   onOpenModal={() => setSelectedEmiCourse({
@@ -412,7 +490,7 @@ function CoursesModule() {
           </div>
 
           <div>
-            <label className="form-label font-semibold text-slate-700">Fee (₹) *</label>
+            <label className="form-label font-semibold text-slate-700">Base Fee (₹) *</label>
             <input
               type="number"
               className="form-control"
@@ -422,59 +500,91 @@ function CoursesModule() {
             />
           </div>
 
-          {/* Payment & EMI Structure Options */}
-          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                Payment Options (Cash & EMI Structure)
-              </label>
-              <span className="text-[11px] text-slate-500 font-medium">Select available options</span>
+          {/* Fee + 18% GST Summary */}
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+            <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+              <span>Base Fee: ₹{addCourseFeeDetails.base.toLocaleString()}</span>
+              <span className="text-amber-700 font-bold">+ 18% GST: ₹{addCourseFeeDetails.gst.toLocaleString()}</span>
+            </div>
+            <div className="flex items-center justify-between pt-1 border-t border-slate-200 text-sm font-black text-slate-900">
+              <span>Total Payable with 18% GST:</span>
+              <span className="text-blue-600 text-base">₹{addCourseFeeDetails.total.toLocaleString()}</span>
+            </div>
+          </div>
+
+          {/* Payment Structure (Only Cash and EMI with all options) */}
+          <div className="space-y-3">
+            <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
+              Payment Options (Cash & EMI)
+            </label>
+
+            {/* Option 1: Cash */}
+            <div className="p-3 rounded-xl border border-emerald-300 bg-emerald-50/70 flex items-center justify-between">
+              <div>
+                <div className="text-xs font-bold text-emerald-900">💵 Option 1: Cash (Full Payment)</div>
+                <div className="text-[11px] text-emerald-700 mt-0.5">Single upfront settlement including 18% GST</div>
+              </div>
+              <div className="text-right font-black text-emerald-950 text-base">
+                ₹{addCourseFeeDetails.total.toLocaleString()}
+              </div>
             </div>
 
-            {/* Checkbox selector for Cash, 4, 6, 8, 15 EMI */}
-            <div className="flex flex-wrap gap-2">
-              {EMI_PLANS_DEF.map(plan => {
-                const isChecked = cForm.plans?.includes(plan.key);
-                return (
-                  <label
-                    key={plan.key}
-                    className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border cursor-pointer transition-all ${
-                      isChecked
-                        ? 'bg-blue-50 text-blue-800 border-blue-300 shadow-xs'
-                        : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={isChecked}
-                      onChange={(e) => {
-                        const next = e.target.checked
-                          ? [...(cForm.plans || []), plan.key]
-                          : (cForm.plans || []).filter(k => k !== plan.key);
-                        setCForm(p => ({ ...p, plans: next }));
-                      }}
-                      className="rounded text-blue-600 focus:ring-blue-500"
-                    />
-                    <span>{plan.label}</span>
-                  </label>
-                );
-              })}
-            </div>
-
-            {/* Live calculation cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
-              {getCourseEMIBreakdown(cForm.fee_amount, cForm.plans).map(plan => (
-                <div key={plan.key} className="bg-white border border-slate-200 rounded-lg p-2.5 text-center shadow-xs">
-                  <div className="text-[11px] font-bold text-slate-600">{plan.label}</div>
-                  <div className="text-base font-extrabold text-blue-600 mt-0.5">
-                    ₹{plan.installment.toLocaleString()}
-                    {plan.months > 1 && <span className="text-[10px] text-slate-500 font-normal">/mo</span>}
-                  </div>
-                  <div className="text-[10px] text-slate-400 mt-0.5">
-                    {plan.months === 1 ? '1 Upfront Payment' : `${plan.months} Monthly Payments`}
-                  </div>
+            {/* Option 2: EMI (All Options) */}
+            <div className="p-3 rounded-xl border border-blue-200 bg-blue-50/40 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-bold text-blue-900">💳 Option 2: EMI (All Options)</div>
+                  <div className="text-[11px] text-slate-500">Select which EMI durations to offer (with 18% GST)</div>
                 </div>
-              ))}
+              </div>
+
+              {/* Checkboxes for 4, 6, 8, 15 EMI */}
+              <div className="flex flex-wrap gap-2">
+                {addCourseFeeDetails.allEmiPlans.map(plan => {
+                  const isChecked = cForm.emiPlans?.includes(plan.key);
+                  return (
+                    <label
+                      key={plan.key}
+                      className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border cursor-pointer transition-all ${
+                        isChecked
+                          ? 'bg-white text-blue-800 border-blue-400 shadow-xs'
+                          : 'bg-slate-100 text-slate-400 border-slate-200'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                            ? [...(cForm.emiPlans || []), plan.key]
+                            : (cForm.emiPlans || []).filter(k => k !== plan.key);
+                          setCForm(p => ({ ...p, emiPlans: next }));
+                        }}
+                        className="rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>{plan.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+
+              {/* Live EMI Cards Grid */}
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                {addCourseFeeDetails.allEmiPlans
+                  .filter(p => cForm.emiPlans?.includes(p.key))
+                  .map(plan => (
+                    <div key={plan.key} className="bg-white border border-blue-100 rounded-lg p-2.5 text-center shadow-xs">
+                      <div className="text-[11px] font-bold text-slate-600">{plan.label} ({plan.months} Months)</div>
+                      <div className="text-base font-extrabold text-blue-700 mt-0.5">
+                        ₹{plan.installmentTotal.toLocaleString()}
+                        <span className="text-[10px] text-slate-500 font-normal"> / mo</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        Base: ₹{plan.installmentBase.toLocaleString()} + 18% GST: ₹{plan.installmentGst.toLocaleString()}
+                      </div>
+                    </div>
+                  ))}
+              </div>
             </div>
           </div>
 
@@ -502,22 +612,27 @@ function CoursesModule() {
               onChange={e => setBForm(p => ({ ...p, course_id: e.target.value }))}
             >
               <option value="">Select course</option>
-              {courses.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.code}) — ₹{Number(c.fee_amount || 0).toLocaleString()}
-                </option>
-              ))}
+              {courses.map(c => {
+                const det = calculateFeeDetails(c.fee_amount);
+                return (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.code}) — ₹{det.total.toLocaleString()} (inc. 18% GST)
+                  </option>
+                );
+              })}
             </select>
           </div>
 
           {selectedCourseForBatch && (
             <div className="bg-blue-50/60 border border-blue-200 rounded-xl p-3 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-blue-900">Selected Course Fee</span>
-                <span className="text-sm font-bold text-blue-700">₹{Number(selectedCourseForBatch.fee_amount || 0).toLocaleString()}</span>
+                <span className="text-xs font-semibold text-blue-900">Course Total Fee (inc. 18% GST):</span>
+                <span className="text-sm font-bold text-blue-700">
+                  ₹{calculateFeeDetails(selectedCourseForBatch.fee_amount).total.toLocaleString()}
+                </span>
               </div>
               <div className="text-[11px] font-semibold text-slate-600 uppercase tracking-wider">Payment Options (Cash & EMI):</div>
-              <EMIPlanBadges
+              <PaymentOptionsCell
                 fee={selectedCourseForBatch.fee_amount}
                 description={selectedCourseForBatch.description}
                 onOpenModal={() => setSelectedEmiCourse(selectedCourseForBatch)}
@@ -566,65 +681,102 @@ function CoursesModule() {
         </FormModal>
       )}
 
-      {/* Detailed EMI Plan Breakdown Modal */}
-      {selectedEmiCourse && (
-        <div className="modal-overlay" onClick={() => setSelectedEmiCourse(null)}>
-          <div className="modal max-w-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">Payment & EMI Breakdown</h2>
-                <p className="text-xs text-slate-500 mt-0.5">{selectedEmiCourse.name}</p>
-              </div>
-              <button onClick={() => setSelectedEmiCourse(null)} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
-            </div>
-            <div className="modal-body space-y-4">
-              <div className="flex items-center justify-between p-3.5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl">
+      {/* Detailed Payment & All EMI Options Modal */}
+      {selectedEmiCourse && (() => {
+        const allowedPlans = parseCoursePlans(selectedEmiCourse.description);
+        const modalDetails = calculateFeeDetails(selectedEmiCourse.fee_amount, allowedPlans);
+
+        return (
+          <div className="modal-overlay" onClick={() => setSelectedEmiCourse(null)}>
+            <div className="modal max-w-xl" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
                 <div>
-                  <div className="text-xs font-semibold text-blue-800 uppercase tracking-wider">Total Course Fee</div>
-                  <div className="text-2xl font-black text-blue-950 mt-0.5">
-                    ₹{Number(selectedEmiCourse.fee_amount || 0).toLocaleString()}
-                  </div>
+                  <h2 className="text-lg font-bold text-slate-900">Payment & EMI Options Breakdown</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">{selectedEmiCourse.name}</p>
                 </div>
-                {selectedEmiCourse.duration_months && (
-                  <div className="text-right">
-                    <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Course Duration</div>
-                    <div className="text-base font-bold text-slate-800 mt-0.5">{selectedEmiCourse.duration_months} Months</div>
-                  </div>
-                )}
+                <button onClick={() => setSelectedEmiCourse(null)} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
               </div>
 
-              <div className="space-y-2.5">
-                <div className="text-xs font-bold text-slate-700 uppercase tracking-wider">Available Payment Plans:</div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {getCourseEMIBreakdown(selectedEmiCourse.fee_amount, parseCoursePlans(selectedEmiCourse.description)).map(plan => (
-                    <div key={plan.key} className={`p-3 rounded-xl border ${plan.badgeClass} flex flex-col justify-between shadow-xs`}>
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-sm text-slate-900">{plan.fullName}</span>
-                          <span className="text-[11px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-white/70 border border-black/5">{plan.label}</span>
-                        </div>
-                        <div className="text-xl font-black text-slate-900 mt-2">
-                          ₹{plan.installment.toLocaleString()}
-                          {plan.months > 1 && <span className="text-xs font-medium text-slate-600"> / month</span>}
-                        </div>
-                      </div>
-                      <div className="text-xs mt-3 pt-2 border-t border-black/10 flex justify-between text-slate-600 font-medium">
-                        <span>{plan.months === 1 ? 'Single payment' : `${plan.months} installments`}</span>
-                        <span className="font-semibold text-slate-800">Total: ₹{plan.total.toLocaleString()}</span>
+              <div className="modal-body space-y-4">
+                {/* GST & Fee Card */}
+                <div className="p-3.5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl space-y-2">
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div>
+                      <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Base Fee</div>
+                      <div className="text-base font-bold text-slate-900 mt-0.5">₹{modalDetails.base.toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] font-semibold text-amber-700 uppercase tracking-wider">GST (18%)</div>
+                      <div className="text-base font-bold text-amber-700 mt-0.5">+₹{modalDetails.gst.toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] font-semibold text-blue-800 uppercase tracking-wider">Total with GST</div>
+                      <div className="text-lg font-black text-blue-950 mt-0.5">₹{modalDetails.total.toLocaleString()}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Option 1: Cash Payment */}
+                <div>
+                  <div className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                    💵 Option 1: Cash Payment
+                  </div>
+                  <div className="p-3.5 rounded-xl border border-emerald-300 bg-emerald-50 flex items-center justify-between">
+                    <div>
+                      <div className="font-bold text-sm text-emerald-950">One-Time Full Settlement</div>
+                      <div className="text-xs text-emerald-700 mt-0.5">
+                        Base: ₹{modalDetails.base.toLocaleString()} + 18% GST: ₹{modalDetails.gst.toLocaleString()}
                       </div>
                     </div>
-                  ))}
+                    <div className="text-right">
+                      <div className="text-xs uppercase font-semibold text-emerald-700">Total Payable</div>
+                      <div className="text-xl font-black text-emerald-950">₹{modalDetails.total.toLocaleString()}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Option 2: EMI Options */}
+                <div>
+                  <div className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                    💳 Option 2: EMI Payment (All Options: 4, 6, 8, 15 Months)
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {modalDetails.emiOptions.map(plan => (
+                      <div key={plan.key} className={`p-3 rounded-xl border ${plan.badgeClass} flex flex-col justify-between shadow-xs`}>
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-sm text-slate-900">{plan.fullName}</span>
+                            <span className="text-[11px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-white/80 border border-black/5">
+                              {plan.label}
+                            </span>
+                          </div>
+                          <div className="text-xl font-black text-slate-900 mt-2">
+                            ₹{plan.installmentTotal.toLocaleString()}
+                            <span className="text-xs font-medium text-slate-600"> / month</span>
+                          </div>
+                          <div className="text-[11px] text-slate-600 mt-1">
+                            Base: ₹{plan.installmentBase.toLocaleString()} + 18% GST: ₹{plan.installmentGst.toLocaleString()}
+                          </div>
+                        </div>
+                        <div className="text-xs mt-3 pt-2 border-t border-black/10 flex justify-between text-slate-600 font-medium">
+                          <span>{plan.months} Monthly Installments</span>
+                          <span className="font-semibold text-slate-800">Total: ₹{plan.totalAmount.toLocaleString()}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="modal-footer">
-              <button onClick={() => setSelectedEmiCourse(null)} className="btn-primary btn">
-                Close
-              </button>
+
+              <div className="modal-footer">
+                <button onClick={() => setSelectedEmiCourse(null)} className="btn-primary btn">
+                  Close
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </>
   );
 }
