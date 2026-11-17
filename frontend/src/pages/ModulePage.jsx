@@ -158,34 +158,60 @@ const GST_PERCENT = 18;
 const EMI_MONTHS_LIST = [4, 6, 8, 15];
 
 function calculateFeeDetails(baseAmount, allowedPlans) {
-  const base = Math.max(0, Number(baseAmount) || 0);
-  const gst = Math.round(base * (GST_PERCENT / 100));
-  const total = base + gst;
+  const originalBase = Math.max(0, Number(baseAmount) || 0);
+  const originalGst = Math.round(originalBase * (GST_PERCENT / 100));
+  const originalTotal = originalBase + originalGst;
+
+  // 1. Cash Option: 15% Discount
+  const cashDiscountPercent = 15;
+  const cashDiscountAmount = Math.round(originalTotal * (cashDiscountPercent / 100));
+  const cashTotal = originalTotal - cashDiscountAmount;
+  const cashBase = Math.round(originalBase * (1 - cashDiscountPercent / 100));
+  const cashGst = cashTotal - cashBase;
 
   const cash = {
     key: 'cash',
     label: 'Cash',
     fullName: 'Full Cash Payment',
     months: 1,
-    baseAmount: base,
-    gstAmount: gst,
-    totalAmount: total,
-    installmentAmount: total,
+    discountPercent: cashDiscountPercent,
+    discountAmount: cashDiscountAmount,
+    originalTotal,
+    baseAmount: cashBase,
+    gstAmount: cashGst,
+    totalAmount: cashTotal,
+    installmentAmount: cashTotal,
     badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-300',
   };
 
+  // 2. EMI Options:
+  // - 4, 6, 8 EMI: 7% Discount
+  // - 15 EMI (Total EMI): 0% Discount (No Discount)
   const allEmiPlans = EMI_MONTHS_LIST.map(months => {
-    const installmentTotal = Math.round(total / months);
-    const installmentBase = Math.round(base / months);
+    const isDiscounted = [4, 6, 8].includes(months);
+    const discountPercent = isDiscounted ? 7 : 0;
+    const discountAmount = Math.round(originalTotal * (discountPercent / 100));
+    const totalWithDiscount = originalTotal - discountAmount;
+    const baseWithDiscount = Math.round(originalBase * (1 - discountPercent / 100));
+    const gstWithDiscount = totalWithDiscount - baseWithDiscount;
+
+    const installmentTotal = Math.round(totalWithDiscount / months);
+    const installmentBase = Math.round(baseWithDiscount / months);
     const installmentGst = installmentTotal - installmentBase;
+    const originalInstallment = Math.round(originalTotal / months);
+
     return {
       key: `emi_${months}`,
       months,
       label: `${months} EMI`,
       fullName: `${months} Months EMI Plan`,
-      baseAmount: base,
-      gstAmount: gst,
-      totalAmount: total,
+      discountPercent,
+      discountAmount,
+      originalTotal,
+      originalInstallment,
+      baseAmount: baseWithDiscount,
+      gstAmount: gstWithDiscount,
+      totalAmount: totalWithDiscount,
       installmentTotal,
       installmentBase,
       installmentGst,
@@ -202,9 +228,9 @@ function calculateFeeDetails(baseAmount, allowedPlans) {
     : allEmiPlans;
 
   return {
-    base,
-    gst,
-    total,
+    base: originalBase,
+    gst: originalGst,
+    total: originalTotal,
     cash,
     allEmiPlans,
     emiOptions: emiOptions.length > 0 ? emiOptions : allEmiPlans,
@@ -236,31 +262,35 @@ function PaymentOptionsCell({ fee, description, onOpenModal }) {
 
   return (
     <div className="flex flex-col gap-1.5 py-1">
-      {/* 1. Cash Option */}
-      <div className="flex items-center gap-2">
-        <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300">
+      {/* 1. Cash Option with 15% discount */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-900 border border-emerald-300">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
           <span>Cash:</span>
-          <span className="font-bold">₹{details.cash.totalAmount.toLocaleString()}</span>
-          <span className="text-[10px] text-emerald-600 font-normal">(inc. 18% GST)</span>
+          <span className="line-through text-slate-400 text-[10px]">₹{details.total.toLocaleString()}</span>
+          <span className="font-extrabold text-emerald-950">₹{details.cash.totalAmount.toLocaleString()}</span>
+          <span className="text-[10px] bg-emerald-200 text-emerald-900 px-1 py-0.2 rounded font-black">15% OFF</span>
         </span>
       </div>
 
-      {/* 2. EMI Option */}
-      <div className="flex items-center gap-2">
-        <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-0.5 rounded-md bg-blue-50 text-blue-800 border border-blue-300">
+      {/* 2. EMI Option with 7% discount on 4,6,8 and 0% on 15 */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-0.5 rounded-md bg-blue-50 text-blue-900 border border-blue-300">
           <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
           <span>EMI:</span>
-          <span className="font-normal text-blue-700">4, 6, 8, 15 Months</span>
-          <span className="font-bold text-blue-900">from ₹{minEmi?.installmentTotal.toLocaleString()}/mo</span>
+          <span className="text-blue-800">4, 6, 8 EMI</span>
+          <span className="text-[10px] bg-blue-200 text-blue-900 px-1 py-0.2 rounded font-black">7% OFF</span>
+          <span className="text-slate-400 text-[10px]">|</span>
+          <span className="text-slate-600">15 EMI</span>
+          <span className="font-bold text-blue-950">from ₹{minEmi?.installmentTotal.toLocaleString()}/mo</span>
         </span>
 
         {onOpenModal && (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onOpenModal(); }}
-            className="text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
-            title="View all EMI options and schedule breakdown"
+            className="text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer ml-1"
+            title="View all EMI options with discounts and schedule breakdown"
           >
             All EMI Options ➔
           </button>
@@ -377,7 +407,7 @@ function CoursesModule() {
             { header: 'Code', key: 'code' },
             { header: 'Duration', render: (r) => `${r.duration_months} months` },
             {
-              header: 'Fee & 18% GST',
+              header: 'Standard Fee (18% GST)',
               render: (r) => {
                 const details = calculateFeeDetails(r.fee_amount);
                 return (
@@ -393,7 +423,7 @@ function CoursesModule() {
               },
             },
             {
-              header: 'Payment Structure (Cash & EMI)',
+              header: 'Discounted Payment Structure (Cash & EMI)',
               render: (r) => (
                 <PaymentOptionsCell
                   fee={r.fee_amount}
@@ -414,7 +444,7 @@ function CoursesModule() {
             { header: 'Batch', render: (r) => <span className="font-semibold text-slate-800">{r.name}</span> },
             { header: 'Course', render: (r) => r.courses?.name || '—' },
             {
-              header: 'Fee & 18% GST',
+              header: 'Standard Fee (18% GST)',
               render: (r) => {
                 if (!r.courses?.fee_amount) return '—';
                 const details = calculateFeeDetails(r.courses.fee_amount);
@@ -431,7 +461,7 @@ function CoursesModule() {
               },
             },
             {
-              header: 'Payment Structure (Cash & EMI)',
+              header: 'Discounted Payment Structure (Cash & EMI)',
               render: (r) => (
                 <PaymentOptionsCell
                   fee={r.courses?.fee_amount}
@@ -490,7 +520,7 @@ function CoursesModule() {
           </div>
 
           <div>
-            <label className="form-label font-semibold text-slate-700">Base Fee (₹) *</label>
+            <label className="form-label font-semibold text-slate-700">Base Course Fee (₹) *</label>
             <input
               type="number"
               className="form-control"
@@ -507,34 +537,47 @@ function CoursesModule() {
               <span className="text-amber-700 font-bold">+ 18% GST: ₹{addCourseFeeDetails.gst.toLocaleString()}</span>
             </div>
             <div className="flex items-center justify-between pt-1 border-t border-slate-200 text-sm font-black text-slate-900">
-              <span>Total Payable with 18% GST:</span>
+              <span>Standard Total (inc. 18% GST):</span>
               <span className="text-blue-600 text-base">₹{addCourseFeeDetails.total.toLocaleString()}</span>
             </div>
           </div>
 
-          {/* Payment Structure (Only Cash and EMI with all options) */}
+          {/* Payment Structure (Only Cash and EMI with discounts) */}
           <div className="space-y-3">
             <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
-              Payment Options (Cash & EMI)
+              Discounted Payment Options (Cash & EMI)
             </label>
 
-            {/* Option 1: Cash */}
+            {/* Option 1: Cash (15% Discount) */}
             <div className="p-3 rounded-xl border border-emerald-300 bg-emerald-50/70 flex items-center justify-between">
               <div>
-                <div className="text-xs font-bold text-emerald-900">💵 Option 1: Cash (Full Payment)</div>
-                <div className="text-[11px] text-emerald-700 mt-0.5">Single upfront settlement including 18% GST</div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-emerald-950">💵 Option 1: Cash (Full Payment)</span>
+                  <span className="text-[10px] bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded font-black">15% DISCOUNT</span>
+                </div>
+                <div className="text-[11px] text-emerald-700 mt-0.5">
+                  Standard ₹{addCourseFeeDetails.total.toLocaleString()} — Save ₹{addCourseFeeDetails.cash.discountAmount.toLocaleString()}
+                </div>
               </div>
-              <div className="text-right font-black text-emerald-950 text-base">
-                ₹{addCourseFeeDetails.total.toLocaleString()}
+              <div className="text-right">
+                <div className="line-through text-slate-400 text-xs">₹{addCourseFeeDetails.total.toLocaleString()}</div>
+                <div className="font-black text-emerald-950 text-lg">
+                  ₹{addCourseFeeDetails.cash.totalAmount.toLocaleString()}
+                </div>
               </div>
             </div>
 
-            {/* Option 2: EMI (All Options) */}
+            {/* Option 2: EMI (4, 6, 8 EMI: 7% Discount · 15 EMI: No Discount) */}
             <div className="p-3 rounded-xl border border-blue-200 bg-blue-50/40 space-y-2.5">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-xs font-bold text-blue-900">💳 Option 2: EMI (All Options)</div>
-                  <div className="text-[11px] text-slate-500">Select which EMI durations to offer (with 18% GST)</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-blue-900">💳 Option 2: EMI Payment Plans</span>
+                    <span className="text-[10px] bg-blue-200 text-blue-900 px-1.5 py-0.5 rounded font-black">4, 6, 8 EMI: 7% DISCOUNT</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    7% OFF for 4, 6, 8 months · 15 months (Total EMI) has no discount
+                  </div>
                 </div>
               </div>
 
@@ -563,25 +606,41 @@ function CoursesModule() {
                         className="rounded text-blue-600 focus:ring-blue-500"
                       />
                       <span>{plan.label}</span>
+                      {plan.discountPercent > 0 && (
+                        <span className="text-[9px] bg-blue-100 text-blue-800 px-1 rounded font-bold">7% OFF</span>
+                      )}
                     </label>
                   );
                 })}
               </div>
 
-              {/* Live EMI Cards Grid */}
+              {/* Live EMI Cards Grid with discounts */}
               <div className="grid grid-cols-2 gap-2 pt-1">
                 {addCourseFeeDetails.allEmiPlans
                   .filter(p => cForm.emiPlans?.includes(p.key))
                   .map(plan => (
                     <div key={plan.key} className="bg-white border border-blue-100 rounded-lg p-2.5 text-center shadow-xs">
-                      <div className="text-[11px] font-bold text-slate-600">{plan.label} ({plan.months} Months)</div>
-                      <div className="text-base font-extrabold text-blue-700 mt-0.5">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-slate-700">
+                        <span>{plan.label} ({plan.months}m)</span>
+                        {plan.discountPercent > 0 ? (
+                          <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1 py-0.2 rounded font-black">7% OFF</span>
+                        ) : (
+                          <span className="text-[9px] bg-slate-100 text-slate-500 px-1 py-0.2 rounded">No Disc.</span>
+                        )}
+                      </div>
+                      <div className="text-base font-extrabold text-blue-700 mt-1">
                         ₹{plan.installmentTotal.toLocaleString()}
                         <span className="text-[10px] text-slate-500 font-normal"> / mo</span>
                       </div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">
-                        Base: ₹{plan.installmentBase.toLocaleString()} + 18% GST: ₹{plan.installmentGst.toLocaleString()}
-                      </div>
+                      {plan.discountPercent > 0 ? (
+                        <div className="text-[10px] text-emerald-600 font-medium mt-0.5">
+                          Save ₹{plan.discountAmount.toLocaleString()} (Total: ₹{plan.totalAmount.toLocaleString()})
+                        </div>
+                      ) : (
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          Standard Total: ₹{plan.totalAmount.toLocaleString()}
+                        </div>
+                      )}
                     </div>
                   ))}
               </div>
@@ -616,7 +675,7 @@ function CoursesModule() {
                 const det = calculateFeeDetails(c.fee_amount);
                 return (
                   <option key={c.id} value={c.id}>
-                    {c.name} ({c.code}) — ₹{det.total.toLocaleString()} (inc. 18% GST)
+                    {c.name} ({c.code}) — ₹{det.total.toLocaleString()} (Cash: ₹{det.cash.totalAmount.toLocaleString()} with 15% OFF)
                   </option>
                 );
               })}
@@ -626,12 +685,14 @@ function CoursesModule() {
           {selectedCourseForBatch && (
             <div className="bg-blue-50/60 border border-blue-200 rounded-xl p-3 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-blue-900">Course Total Fee (inc. 18% GST):</span>
+                <span className="text-xs font-semibold text-blue-900">Standard Course Fee (inc. 18% GST):</span>
                 <span className="text-sm font-bold text-blue-700">
                   ₹{calculateFeeDetails(selectedCourseForBatch.fee_amount).total.toLocaleString()}
                 </span>
               </div>
-              <div className="text-[11px] font-semibold text-slate-600 uppercase tracking-wider">Payment Options (Cash & EMI):</div>
+              <div className="text-[11px] font-semibold text-slate-600 uppercase tracking-wider">
+                Discounted Payment Options:
+              </div>
               <PaymentOptionsCell
                 fee={selectedCourseForBatch.fee_amount}
                 description={selectedCourseForBatch.description}
@@ -681,7 +742,7 @@ function CoursesModule() {
         </FormModal>
       )}
 
-      {/* Detailed Payment & All EMI Options Modal */}
+      {/* Detailed Payment & All EMI Options Modal with Discounts */}
       {selectedEmiCourse && (() => {
         const allowedPlans = parseCoursePlans(selectedEmiCourse.description);
         const modalDetails = calculateFeeDetails(selectedEmiCourse.fee_amount, allowedPlans);
@@ -691,14 +752,14 @@ function CoursesModule() {
             <div className="modal max-w-xl" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900">Payment & EMI Options Breakdown</h2>
+                  <h2 className="text-lg font-bold text-slate-900">Discounted Payment & EMI Options</h2>
                   <p className="text-xs text-slate-500 mt-0.5">{selectedEmiCourse.name}</p>
                 </div>
                 <button onClick={() => setSelectedEmiCourse(null)} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
               </div>
 
               <div className="modal-body space-y-4">
-                {/* GST & Fee Card */}
+                {/* Standard Fee Summary */}
                 <div className="p-3.5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl space-y-2">
                   <div className="grid grid-cols-3 gap-2 text-center">
                     <div>
@@ -710,57 +771,94 @@ function CoursesModule() {
                       <div className="text-base font-bold text-amber-700 mt-0.5">+₹{modalDetails.gst.toLocaleString()}</div>
                     </div>
                     <div>
-                      <div className="text-[11px] font-semibold text-blue-800 uppercase tracking-wider">Total with GST</div>
+                      <div className="text-[11px] font-semibold text-blue-800 uppercase tracking-wider">Standard Total</div>
                       <div className="text-lg font-black text-blue-950 mt-0.5">₹{modalDetails.total.toLocaleString()}</div>
                     </div>
                   </div>
                 </div>
 
-                {/* Option 1: Cash Payment */}
+                {/* Option 1: Cash Payment (15% Discount) */}
                 <div>
-                  <div className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                    💵 Option 1: Cash Payment
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                      💵 Option 1: Cash Payment
+                    </span>
+                    <span className="text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full">
+                      15% SPECIAL DISCOUNT
+                    </span>
                   </div>
                   <div className="p-3.5 rounded-xl border border-emerald-300 bg-emerald-50 flex items-center justify-between">
                     <div>
-                      <div className="font-bold text-sm text-emerald-950">One-Time Full Settlement</div>
+                      <div className="font-bold text-sm text-emerald-950">One-Time Settlement</div>
                       <div className="text-xs text-emerald-700 mt-0.5">
-                        Base: ₹{modalDetails.base.toLocaleString()} + 18% GST: ₹{modalDetails.gst.toLocaleString()}
+                        Base: ₹{modalDetails.cash.baseAmount.toLocaleString()} + 18% GST: ₹{modalDetails.cash.gstAmount.toLocaleString()}
+                      </div>
+                      <div className="text-xs font-bold text-emerald-800 mt-1">
+                        🎉 Instant Savings: ₹{modalDetails.cash.discountAmount.toLocaleString()} (15% OFF)
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-xs uppercase font-semibold text-emerald-700">Total Payable</div>
-                      <div className="text-xl font-black text-emerald-950">₹{modalDetails.total.toLocaleString()}</div>
+                      <div className="line-through text-slate-400 text-xs">₹{modalDetails.total.toLocaleString()}</div>
+                      <div className="text-xs uppercase font-semibold text-emerald-700">Net Payable</div>
+                      <div className="text-2xl font-black text-emerald-950">₹{modalDetails.cash.totalAmount.toLocaleString()}</div>
                     </div>
                   </div>
                 </div>
 
-                {/* Option 2: EMI Options */}
+                {/* Option 2: EMI Options with 7% on 4,6,8 and 0% on 15 */}
                 <div>
-                  <div className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                    💳 Option 2: EMI Payment (All Options: 4, 6, 8, 15 Months)
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                      💳 Option 2: EMI Payment Plans
+                    </span>
+                    <span className="text-xs font-bold text-blue-700">
+                      4, 6, 8 EMI: 7% OFF · 15 EMI: No Discount
+                    </span>
                   </div>
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     {modalDetails.emiOptions.map(plan => (
                       <div key={plan.key} className={`p-3 rounded-xl border ${plan.badgeClass} flex flex-col justify-between shadow-xs`}>
                         <div>
                           <div className="flex items-center justify-between">
                             <span className="font-bold text-sm text-slate-900">{plan.fullName}</span>
-                            <span className="text-[11px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-white/80 border border-black/5">
-                              {plan.label}
-                            </span>
+                            {plan.discountPercent > 0 ? (
+                              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-emerald-200 text-emerald-900 border border-emerald-300">
+                                7% DISCOUNT
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded bg-slate-200 text-slate-700">
+                                TOTAL EMI (NO DISC.)
+                              </span>
+                            )}
                           </div>
+
                           <div className="text-xl font-black text-slate-900 mt-2">
                             ₹{plan.installmentTotal.toLocaleString()}
                             <span className="text-xs font-medium text-slate-600"> / month</span>
                           </div>
+
+                          {plan.discountPercent > 0 && (
+                            <div className="text-[11px] text-slate-400 line-through">
+                              Standard: ₹{plan.originalInstallment.toLocaleString()} / mo
+                            </div>
+                          )}
+
                           <div className="text-[11px] text-slate-600 mt-1">
                             Base: ₹{plan.installmentBase.toLocaleString()} + 18% GST: ₹{plan.installmentGst.toLocaleString()}
                           </div>
                         </div>
-                        <div className="text-xs mt-3 pt-2 border-t border-black/10 flex justify-between text-slate-600 font-medium">
+
+                        <div className="text-xs mt-3 pt-2 border-t border-black/10 flex justify-between text-slate-700 font-medium">
                           <span>{plan.months} Monthly Installments</span>
-                          <span className="font-semibold text-slate-800">Total: ₹{plan.totalAmount.toLocaleString()}</span>
+                          <span className="font-bold text-slate-900">
+                            Total: ₹{plan.totalAmount.toLocaleString()}
+                            {plan.discountPercent > 0 && (
+                              <span className="text-emerald-700 font-semibold block text-right">
+                                Save ₹{plan.discountAmount.toLocaleString()}
+                              </span>
+                            )}
+                          </span>
                         </div>
                       </div>
                     ))}
