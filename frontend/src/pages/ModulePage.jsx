@@ -34,15 +34,21 @@ function DataTable({ columns, rows, loading, onRowClick, emptyIcon, emptyText })
 function FormModal({ title, children, onClose, onSave, saving }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal max-w-lg" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2 className="text-lg font-bold">{title}</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl">&times;</button>
+      <div className="modal max-w-lg max-h-[85vh] flex flex-col my-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header sticky top-0 bg-white z-20 px-6 py-4 border-b border-slate-200 shrink-0 flex items-center justify-between">
+          <h2 className="text-lg font-bold text-slate-900">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 text-xl font-bold cursor-pointer transition-all"
+          >
+            &times;
+          </button>
         </div>
-        <div className="modal-body space-y-4">{children}</div>
-        <div className="modal-footer">
-          <button onClick={onClose} className="btn-ghost btn">Cancel</button>
-          <button onClick={onSave} disabled={saving} className="btn-primary btn">
+        <div className="modal-body overflow-y-auto flex-1 p-6 space-y-4">{children}</div>
+        <div className="modal-footer sticky bottom-0 bg-white z-20 px-6 py-3.5 border-t border-slate-200 shrink-0 flex justify-end gap-3">
+          <button type="button" onClick={onClose} className="btn-ghost btn">Cancel</button>
+          <button type="button" onClick={onSave} disabled={saving} className="btn-primary btn">
             {saving ? <><div className="spinner w-4 h-4" /> Saving...</> : 'Save'}
           </button>
         </div>
@@ -749,16 +755,25 @@ function CoursesModule() {
 
         return (
           <div className="modal-overlay" onClick={() => setSelectedEmiCourse(null)}>
-            <div className="modal max-w-xl" onClick={(e) => e.stopPropagation()}>
-              <div className="modal-header">
-                <div>
-                  <h2 className="text-lg font-bold text-slate-900">Discounted Payment & EMI Options</h2>
-                  <p className="text-xs text-slate-500 mt-0.5">{selectedEmiCourse.name}</p>
+            <div className="modal max-w-xl max-h-[85vh] flex flex-col my-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header sticky top-0 bg-white z-20 px-6 py-4 border-b border-slate-200 shrink-0 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-xl">💳</span>
+                  <div>
+                    <h2 className="text-lg font-bold text-slate-900 leading-tight">Discounted Payment & EMI Options</h2>
+                    <p className="text-xs font-semibold text-blue-600 mt-0.5">{selectedEmiCourse.name}</p>
+                  </div>
                 </div>
-                <button onClick={() => setSelectedEmiCourse(null)} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedEmiCourse(null)}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 text-2xl font-bold cursor-pointer transition-all"
+                >
+                  &times;
+                </button>
               </div>
 
-              <div className="modal-body space-y-4">
+              <div className="modal-body overflow-y-auto flex-1 p-6 space-y-4">
                 {/* Standard Fee Summary */}
                 <div className="p-3.5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl space-y-2">
                   <div className="grid grid-cols-3 gap-2 text-center">
@@ -866,8 +881,12 @@ function CoursesModule() {
                 </div>
               </div>
 
-              <div className="modal-footer">
-                <button onClick={() => setSelectedEmiCourse(null)} className="btn-primary btn">
+              <div className="modal-footer sticky bottom-0 bg-white z-20 px-6 py-3.5 border-t border-slate-200 shrink-0 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setSelectedEmiCourse(null)}
+                  className="btn-primary btn"
+                >
                   Close
                 </button>
               </div>
