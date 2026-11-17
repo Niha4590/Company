@@ -106,20 +106,35 @@ router.get('/courses/list', async (req, res) => {
 
 router.post('/courses', authorize(...STU_ROLES), async (req, res) => {
   try {
-    const { data, error } = await supabaseAdmin.from('courses').insert(req.body).select().single();
+    const { name, code, description, duration_months, fee_amount, is_active } = req.body;
+    const { data, error } = await supabaseAdmin.from('courses').insert({
+      name,
+      code,
+      description: description || null,
+      duration_months: Number(duration_months) || 6,
+      fee_amount: Number(fee_amount) || 0,
+      is_active: is_active !== undefined ? is_active : true,
+    }).select().single();
     if (error) throw error;
     return res.status(201).json({ data });
-  } catch { return res.status(500).json({ error: 'Failed to create course' }); }
+  } catch (err) {
+    logger.error('Create course error:', err);
+    return res.status(500).json({ error: err?.message || 'Failed to create course' });
+  }
 });
 
 router.get('/batches/list', async (req, res) => {
   try {
     const { course_id } = req.query;
-    let q = supabaseAdmin.from('batches').select('*, courses(name), employees!batches_faculty_id_fkey(first_name, last_name)');
+    let q = supabaseAdmin.from('batches').select('*, courses(id, name, fee_amount, description), employees!batches_faculty_id_fkey(first_name, last_name)');
     if (course_id) q = q.eq('course_id', course_id);
-    const { data } = await q.order('start_date', { ascending: false });
+    const { data, error } = await q.order('start_date', { ascending: false });
+    if (error) throw error;
     return res.json({ data });
-  } catch { return res.status(500).json({ error: 'Failed' }); }
+  } catch (err) {
+    logger.error('Fetch batches error:', err);
+    return res.status(500).json({ error: 'Failed' });
+  }
 });
 
 router.post('/batches', authorize(...STU_ROLES), async (req, res) => {

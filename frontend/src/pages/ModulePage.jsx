@@ -154,6 +154,73 @@ function StudentsModule() {
 }
 
 // ─── COURSES & BATCHES PAGE ──────────────────────────────────
+const EMI_PLANS_DEF = [
+  { key: 'cash', label: 'Cash', fullName: 'Full Cash Payment', months: 1, badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-300' },
+  { key: 'emi_4', label: '4 EMI', fullName: '4 Months Installment', months: 4, badgeClass: 'bg-blue-50 text-blue-800 border-blue-300' },
+  { key: 'emi_6', label: '6 EMI', fullName: '6 Months Installment', months: 6, badgeClass: 'bg-indigo-50 text-indigo-800 border-indigo-300' },
+  { key: 'emi_8', label: '8 EMI', fullName: '8 Months Installment', months: 8, badgeClass: 'bg-purple-50 text-purple-800 border-purple-300' },
+  { key: 'emi_15', label: '15 EMI', fullName: '15 Months Installment', months: 15, badgeClass: 'bg-amber-50 text-amber-800 border-amber-300' },
+];
+
+function parseCoursePlans(description) {
+  if (!description) return ['cash', 'emi_4', 'emi_6', 'emi_8', 'emi_15'];
+  const match = description.match(/\[plans:([^\]]+)\]/);
+  if (match && match[1]) {
+    const list = match[1].split(',').filter(Boolean);
+    if (list.length > 0) return list;
+  }
+  return ['cash', 'emi_4', 'emi_6', 'emi_8', 'emi_15'];
+}
+
+function stripPlansFromDesc(description) {
+  if (!description) return '';
+  return description.replace(/\[plans:[^\]]+\]/g, '').trim();
+}
+
+function getCourseEMIBreakdown(totalFee, allowedKeys) {
+  const fee = Number(totalFee) || 0;
+  const keys = allowedKeys && allowedKeys.length > 0 ? allowedKeys : ['cash', 'emi_4', 'emi_6', 'emi_8', 'emi_15'];
+  return EMI_PLANS_DEF
+    .filter(p => keys.includes(p.key))
+    .map(p => ({
+      ...p,
+      installment: p.months === 1 ? fee : Math.round(fee / p.months),
+      total: fee,
+    }));
+}
+
+function EMIPlanBadges({ fee, description, onOpenModal }) {
+  const amount = Number(fee) || 0;
+  if (!amount) return <span className="text-slate-400 text-xs">—</span>;
+  const plans = parseCoursePlans(description);
+  const items = getCourseEMIBreakdown(amount, plans);
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 py-0.5">
+      {items.map(item => (
+        <span
+          key={item.key}
+          className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-md border ${item.badgeClass}`}
+          title={`${item.fullName}: ₹${item.installment.toLocaleString()}${item.months > 1 ? '/mo' : ''}`}
+        >
+          <span>{item.label}:</span>
+          <span className="font-bold">₹{item.installment.toLocaleString()}{item.months > 1 ? '/m' : ''}</span>
+        </span>
+      ))}
+      {onOpenModal && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onOpenModal(); }}
+          className="text-xs text-blue-600 hover:text-blue-800 hover:underline font-semibold ml-1 cursor-pointer"
+          title="View detailed installment breakdown"
+        >
+          Details ➔
+        </button>
+      )}
+    </div>
+  );
+}
+
 function CoursesModule() {
   const [courses, setCourses] = useState([]);
   const [batches, setBatches] = useState([]);
@@ -161,86 +228,402 @@ function CoursesModule() {
   const [tab, setTab] = useState('courses');
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [cForm, setCForm] = useState({ name: '', code: '', description: '', duration_months: 6, fee_amount: 0 });
+  const [selectedEmiCourse, setSelectedEmiCourse] = useState(null);
+  const [cForm, setCForm] = useState({
+    name: '',
+    code: '',
+    description: '',
+    duration_months: 6,
+    fee_amount: 0,
+    plans: ['cash', 'emi_4', 'emi_6', 'emi_8', 'emi_15'],
+  });
   const [bForm, setBForm] = useState({ course_id: '', name: '', start_date: '', end_date: '', capacity: 30 });
 
   useEffect(() => {
     Promise.all([studentApi.courses(), studentApi.batches({})])
       .then(([c, b]) => { setCourses(c.data.data || []); setBatches(b.data.data || []); })
-      .catch(() => toast.error('Failed'))
+      .catch(() => toast.error('Failed to load courses and batches'))
       .finally(() => setLoading(false));
   }, []);
 
   const saveCourse = async () => {
+    if (!cForm.name || !cForm.code) return toast.error('Name and Code are required');
     setSaving(true);
-    try { await studentApi.createCourse(cForm); toast.success('Created'); setShowForm(false); setCForm({ name: '', code: '', description: '', duration_months: 6, fee_amount: 0 }); studentApi.courses().then(({ data }) => setCourses(data.data || [])); }
-    catch (e) { toast.error(e.response?.data?.error || 'Failed'); }
-    finally { setSaving(false); }
+    try {
+      const plansTag = `[plans:${(cForm.plans || []).join(',')}]`;
+      const descPayload = cForm.description
+        ? `${stripPlansFromDesc(cForm.description)}\n${plansTag}`
+        : plansTag;
+
+      await studentApi.createCourse({
+        name: cForm.name,
+        code: cForm.code,
+        duration_months: Number(cForm.duration_months) || 6,
+        fee_amount: Number(cForm.fee_amount) || 0,
+        description: descPayload,
+      });
+      toast.success('Course created successfully');
+      setShowForm(false);
+      setCForm({
+        name: '',
+        code: '',
+        description: '',
+        duration_months: 6,
+        fee_amount: 0,
+        plans: ['cash', 'emi_4', 'emi_6', 'emi_8', 'emi_15'],
+      });
+      const { data } = await studentApi.courses();
+      setCourses(data.data || []);
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Failed to create course');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const saveBatch = async () => {
+    if (!bForm.course_id || !bForm.name) return toast.error('Course and Batch Name are required');
     setSaving(true);
-    try { await studentApi.createBatch(bForm); toast.success('Created'); setShowForm(false); setBForm({ course_id: '', name: '', start_date: '', end_date: '', capacity: 30 }); studentApi.batches({}).then(({ data }) => setBatches(data.data || [])); }
-    catch (e) { toast.error(e.response?.data?.error || 'Failed'); }
-    finally { setSaving(false); }
+    try {
+      await studentApi.createBatch(bForm);
+      toast.success('Batch created successfully');
+      setShowForm(false);
+      setBForm({ course_id: '', name: '', start_date: '', end_date: '', capacity: 30 });
+      const { data } = await studentApi.batches({});
+      setBatches(data.data || []);
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Failed to create batch');
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const selectedCourseForBatch = courses.find(c => c.id === bForm.course_id);
 
   return (
     <>
       <div className="flex gap-2 mb-4">
-        <button onClick={() => setTab('courses')} className={`btn ${tab === 'courses' ? 'btn-primary' : 'btn-ghost'}`}>📚 Courses ({courses.length})</button>
-        <button onClick={() => setTab('batches')} className={`btn ${tab === 'batches' ? 'btn-primary' : 'btn-ghost'}`}>📋 Batches ({batches.length})</button>
+        <button onClick={() => setTab('courses')} className={`btn ${tab === 'courses' ? 'btn-primary' : 'btn-ghost'}`}>
+          📚 Courses ({courses.length})
+        </button>
+        <button onClick={() => setTab('batches')} className={`btn ${tab === 'batches' ? 'btn-primary' : 'btn-ghost'}`}>
+          📋 Batches ({batches.length})
+        </button>
         <div className="flex-1" />
-        <button onClick={() => setShowForm(true)} className="btn-primary btn">+ Add {tab === 'courses' ? 'Course' : 'Batch'}</button>
+        <button onClick={() => setShowForm(true)} className="btn-primary btn">
+          + Add {tab === 'courses' ? 'Course' : 'Batch'}
+        </button>
       </div>
 
       {tab === 'courses' ? (
         <DataTable
           columns={[
-            { header: 'Name', key: 'name' },
+            { header: 'Name', render: (r) => (
+              <div>
+                <p className="font-semibold text-slate-800">{r.name}</p>
+                {r.description && <p className="text-xs text-slate-500 line-clamp-1">{stripPlansFromDesc(r.description)}</p>}
+              </div>
+            )},
             { header: 'Code', key: 'code' },
             { header: 'Duration', render: (r) => `${r.duration_months} months` },
-            { header: 'Fee', render: (r) => `₹${Number(r.fee_amount).toLocaleString()}` },
+            { header: 'Fee', render: (r) => <span className="font-bold text-slate-900">₹{Number(r.fee_amount || 0).toLocaleString()}</span> },
+            {
+              header: 'Payment Options (Cash & EMI)',
+              render: (r) => (
+                <EMIPlanBadges
+                  fee={r.fee_amount}
+                  description={r.description}
+                  onOpenModal={() => setSelectedEmiCourse(r)}
+                />
+              ),
+            },
           ]}
-          rows={courses} loading={loading} emptyIcon="📚" emptyText="No courses yet"
+          rows={courses}
+          loading={loading}
+          emptyIcon="📚"
+          emptyText="No courses yet"
         />
       ) : (
         <DataTable
           columns={[
-            { header: 'Batch', key: 'name' },
+            { header: 'Batch', render: (r) => <span className="font-semibold text-slate-800">{r.name}</span> },
             { header: 'Course', render: (r) => r.courses?.name || '—' },
-            { header: 'Start', key: 'start_date' },
-            { header: 'Capacity', key: 'capacity' },
+            {
+              header: 'Fee',
+              render: (r) => r.courses?.fee_amount ? <span className="font-bold text-slate-900">₹{Number(r.courses.fee_amount).toLocaleString()}</span> : '—',
+            },
+            {
+              header: 'Payment Options (Cash & EMI)',
+              render: (r) => (
+                <EMIPlanBadges
+                  fee={r.courses?.fee_amount}
+                  description={r.courses?.description}
+                  onOpenModal={() => setSelectedEmiCourse({
+                    name: `${r.name} · ${r.courses?.name || 'Course'}`,
+                    code: r.name,
+                    fee_amount: r.courses?.fee_amount,
+                    description: r.courses?.description,
+                  })}
+                />
+              ),
+            },
+            { header: 'Start Date', render: (r) => r.start_date || '—' },
+            { header: 'Capacity', render: (r) => `${r.capacity || 0} students` },
             { header: 'Status', render: (r) => <Badge status={r.status} /> },
           ]}
-          rows={batches} loading={loading} emptyIcon="📋" emptyText="No batches yet"
+          rows={batches}
+          loading={loading}
+          emptyIcon="📋"
+          emptyText="No batches yet"
         />
       )}
 
+      {/* Add Course Modal */}
       {showForm && tab === 'courses' && (
         <FormModal title="Add Course" onClose={() => setShowForm(false)} onSave={saveCourse} saving={saving}>
-          <div><label className="form-label">Name *</label><input className="form-control" value={cForm.name} onChange={e => setCForm(p => ({ ...p, name: e.target.value }))} /></div>
-          <div><label className="form-label">Code *</label><input className="form-control" value={cForm.code} onChange={e => setCForm(p => ({ ...p, code: e.target.value }))} /></div>
-          <div><label className="form-label">Duration (months)</label><input type="number" className="form-control" value={cForm.duration_months} onChange={e => setCForm(p => ({ ...p, duration_months: +e.target.value }))} /></div>
-          <div><label className="form-label">Fee (₹)</label><input type="number" className="form-control" value={cForm.fee_amount} onChange={e => setCForm(p => ({ ...p, fee_amount: +e.target.value }))} /></div>
-          <div><label className="form-label">Description</label><textarea className="form-control" rows={2} value={cForm.description} onChange={e => setCForm(p => ({ ...p, description: e.target.value }))} /></div>
+          <div>
+            <label className="form-label font-semibold text-slate-700">Course Name *</label>
+            <input
+              className="form-control"
+              placeholder="e.g. Full Stack Web Development"
+              value={cForm.name}
+              onChange={e => setCForm(p => ({ ...p, name: e.target.value }))}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="form-label font-semibold text-slate-700">Code *</label>
+              <input
+                className="form-control"
+                placeholder="e.g. FSWD-101"
+                value={cForm.code}
+                onChange={e => setCForm(p => ({ ...p, code: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="form-label font-semibold text-slate-700">Duration (months)</label>
+              <input
+                type="number"
+                className="form-control"
+                value={cForm.duration_months}
+                onChange={e => setCForm(p => ({ ...p, duration_months: +e.target.value }))}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="form-label font-semibold text-slate-700">Fee (₹) *</label>
+            <input
+              type="number"
+              className="form-control"
+              placeholder="e.g. 50000"
+              value={cForm.fee_amount || ''}
+              onChange={e => setCForm(p => ({ ...p, fee_amount: Math.max(0, +e.target.value) }))}
+            />
+          </div>
+
+          {/* Payment & EMI Structure Options */}
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                Payment Options (Cash & EMI Structure)
+              </label>
+              <span className="text-[11px] text-slate-500 font-medium">Select available options</span>
+            </div>
+
+            {/* Checkbox selector for Cash, 4, 6, 8, 15 EMI */}
+            <div className="flex flex-wrap gap-2">
+              {EMI_PLANS_DEF.map(plan => {
+                const isChecked = cForm.plans?.includes(plan.key);
+                return (
+                  <label
+                    key={plan.key}
+                    className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border cursor-pointer transition-all ${
+                      isChecked
+                        ? 'bg-blue-50 text-blue-800 border-blue-300 shadow-xs'
+                        : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={(e) => {
+                        const next = e.target.checked
+                          ? [...(cForm.plans || []), plan.key]
+                          : (cForm.plans || []).filter(k => k !== plan.key);
+                        setCForm(p => ({ ...p, plans: next }));
+                      }}
+                      className="rounded text-blue-600 focus:ring-blue-500"
+                    />
+                    <span>{plan.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+
+            {/* Live calculation cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
+              {getCourseEMIBreakdown(cForm.fee_amount, cForm.plans).map(plan => (
+                <div key={plan.key} className="bg-white border border-slate-200 rounded-lg p-2.5 text-center shadow-xs">
+                  <div className="text-[11px] font-bold text-slate-600">{plan.label}</div>
+                  <div className="text-base font-extrabold text-blue-600 mt-0.5">
+                    ₹{plan.installment.toLocaleString()}
+                    {plan.months > 1 && <span className="text-[10px] text-slate-500 font-normal">/mo</span>}
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">
+                    {plan.months === 1 ? '1 Upfront Payment' : `${plan.months} Monthly Payments`}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="form-label font-semibold text-slate-700">Description</label>
+            <textarea
+              className="form-control"
+              rows={2}
+              placeholder="Course overview or prerequisites..."
+              value={cForm.description}
+              onChange={e => setCForm(p => ({ ...p, description: e.target.value }))}
+            />
+          </div>
         </FormModal>
       )}
+
+      {/* Add Batch Modal */}
       {showForm && tab === 'batches' && (
         <FormModal title="Add Batch" onClose={() => setShowForm(false)} onSave={saveBatch} saving={saving}>
-          <div><label className="form-label">Course *</label>
-            <select className="select-control" value={bForm.course_id} onChange={e => setBForm(p => ({ ...p, course_id: e.target.value }))}>
+          <div>
+            <label className="form-label font-semibold text-slate-700">Course *</label>
+            <select
+              className="select-control"
+              value={bForm.course_id}
+              onChange={e => setBForm(p => ({ ...p, course_id: e.target.value }))}
+            >
               <option value="">Select course</option>
-              {courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {courses.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.code}) — ₹{Number(c.fee_amount || 0).toLocaleString()}
+                </option>
+              ))}
             </select>
           </div>
-          <div><label className="form-label">Batch Name *</label><input className="form-control" value={bForm.name} onChange={e => setBForm(p => ({ ...p, name: e.target.value }))} /></div>
-          <div className="grid grid-cols-2 gap-3">
-            <div><label className="form-label">Start Date</label><input type="date" className="form-control" value={bForm.start_date} onChange={e => setBForm(p => ({ ...p, start_date: e.target.value }))} /></div>
-            <div><label className="form-label">End Date</label><input type="date" className="form-control" value={bForm.end_date} onChange={e => setBForm(p => ({ ...p, end_date: e.target.value }))} /></div>
+
+          {selectedCourseForBatch && (
+            <div className="bg-blue-50/60 border border-blue-200 rounded-xl p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-blue-900">Selected Course Fee</span>
+                <span className="text-sm font-bold text-blue-700">₹{Number(selectedCourseForBatch.fee_amount || 0).toLocaleString()}</span>
+              </div>
+              <div className="text-[11px] font-semibold text-slate-600 uppercase tracking-wider">Payment Options (Cash & EMI):</div>
+              <EMIPlanBadges
+                fee={selectedCourseForBatch.fee_amount}
+                description={selectedCourseForBatch.description}
+                onOpenModal={() => setSelectedEmiCourse(selectedCourseForBatch)}
+              />
+            </div>
+          )}
+
+          <div>
+            <label className="form-label font-semibold text-slate-700">Batch Name *</label>
+            <input
+              className="form-control"
+              placeholder="e.g. Batch A - Morning"
+              value={bForm.name}
+              onChange={e => setBForm(p => ({ ...p, name: e.target.value }))}
+            />
           </div>
-          <div><label className="form-label">Capacity</label><input type="number" className="form-control" value={bForm.capacity} onChange={e => setBForm(p => ({ ...p, capacity: +e.target.value }))} /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="form-label font-semibold text-slate-700">Start Date</label>
+              <input
+                type="date"
+                className="form-control"
+                value={bForm.start_date}
+                onChange={e => setBForm(p => ({ ...p, start_date: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="form-label font-semibold text-slate-700">End Date</label>
+              <input
+                type="date"
+                className="form-control"
+                value={bForm.end_date}
+                onChange={e => setBForm(p => ({ ...p, end_date: e.target.value }))}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="form-label font-semibold text-slate-700">Capacity</label>
+            <input
+              type="number"
+              className="form-control"
+              value={bForm.capacity}
+              onChange={e => setBForm(p => ({ ...p, capacity: +e.target.value }))}
+            />
+          </div>
         </FormModal>
+      )}
+
+      {/* Detailed EMI Plan Breakdown Modal */}
+      {selectedEmiCourse && (
+        <div className="modal-overlay" onClick={() => setSelectedEmiCourse(null)}>
+          <div className="modal max-w-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Payment & EMI Breakdown</h2>
+                <p className="text-xs text-slate-500 mt-0.5">{selectedEmiCourse.name}</p>
+              </div>
+              <button onClick={() => setSelectedEmiCourse(null)} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
+            </div>
+            <div className="modal-body space-y-4">
+              <div className="flex items-center justify-between p-3.5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl">
+                <div>
+                  <div className="text-xs font-semibold text-blue-800 uppercase tracking-wider">Total Course Fee</div>
+                  <div className="text-2xl font-black text-blue-950 mt-0.5">
+                    ₹{Number(selectedEmiCourse.fee_amount || 0).toLocaleString()}
+                  </div>
+                </div>
+                {selectedEmiCourse.duration_months && (
+                  <div className="text-right">
+                    <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Course Duration</div>
+                    <div className="text-base font-bold text-slate-800 mt-0.5">{selectedEmiCourse.duration_months} Months</div>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2.5">
+                <div className="text-xs font-bold text-slate-700 uppercase tracking-wider">Available Payment Plans:</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {getCourseEMIBreakdown(selectedEmiCourse.fee_amount, parseCoursePlans(selectedEmiCourse.description)).map(plan => (
+                    <div key={plan.key} className={`p-3 rounded-xl border ${plan.badgeClass} flex flex-col justify-between shadow-xs`}>
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-sm text-slate-900">{plan.fullName}</span>
+                          <span className="text-[11px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-white/70 border border-black/5">{plan.label}</span>
+                        </div>
+                        <div className="text-xl font-black text-slate-900 mt-2">
+                          ₹{plan.installment.toLocaleString()}
+                          {plan.months > 1 && <span className="text-xs font-medium text-slate-600"> / month</span>}
+                        </div>
+                      </div>
+                      <div className="text-xs mt-3 pt-2 border-t border-black/10 flex justify-between text-slate-600 font-medium">
+                        <span>{plan.months === 1 ? 'Single payment' : `${plan.months} installments`}</span>
+                        <span className="font-semibold text-slate-800">Total: ₹{plan.total.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button onClick={() => setSelectedEmiCourse(null)} className="btn-primary btn">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
