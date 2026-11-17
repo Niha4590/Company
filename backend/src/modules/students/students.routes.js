@@ -361,22 +361,129 @@ router.post('/:id/invoices', authorize(...STU_ROLES, 'finance'), async (req, res
 
 router.post('/invoices/:id/payment', authorize(...STU_ROLES, 'finance'), async (req, res) => {
   try {
-    const { data: inv } = await supabaseAdmin.from('fee_invoices').select().eq('id', req.params.id).single();
-    if (!inv) return res.status(404).json({ error: 'Invoice not found' });
+    const { amount, payment_mode = 'cash', transaction_reference = '', payment_date, notes } = req.body;
+    const numAmount = Number(amount);
+    if (!numAmount || numAmount <= 0) {
+      return res.status(400).json({ error: 'Please enter a valid payment amount greater than zero' });
+    }
 
-    const { data, error } = await supabaseAdmin.from('fee_payments').insert({
-      ...req.body, invoice_id: req.params.id, received_by: req.user.id,
+    const { data: inv, error: invErr } = await supabaseAdmin.from('fee_invoices')
+      .select('*, fee_payments(amount)')
+      .eq('id', req.params.id)
+      .single();
+    if (invErr || !inv) return res.status(404).json({ error: 'Invoice not found' });
+
+    const totalInvoiceAmount = Number(inv.total_amount || 0);
+    const existingPaid = (inv.fee_payments || []).reduce((s, p) => s + Number(p.amount || 0), 0);
+    const remainingBefore = Math.max(0, totalInvoiceAmount - existingPaid);
+
+    if (numAmount > remainingBefore) {
+      return res.status(400).json({
+        error: `Payment amount (₹${numAmount.toLocaleString()}) exceeds remaining balance of ₹${remainingBefore.toLocaleString()}`
+      });
+    }
+
+    const { data: paymentRecord, error } = await supabaseAdmin.from('fee_payments').insert({
+      invoice_id: req.params.id,
+      amount: numAmount,
+      payment_mode,
+      transaction_reference: transaction_reference || null,
+      payment_date: payment_date || new Date().toISOString().split('T')[0],
+      notes: notes || null,
+      received_by: req.user.id,
     }).select().single();
     if (error) throw error;
 
-    // Check if fully paid
-    const { data: allPayments } = await supabaseAdmin.from('fee_payments').select('amount').eq('invoice_id', req.params.id);
-    const paid = allPayments.reduce((s, p) => s + p.amount, 0);
-    const newStatus = paid >= inv.total_amount ? 'paid' : paid > 0 ? 'partial' : 'unpaid';
+    const newTotalPaid = existingPaid + numAmount;
+    const remainingAfter = Math.max(0, totalInvoiceAmount - newTotalPaid);
+    const newStatus = remainingAfter <= 0 ? 'paid' : newTotalPaid > 0 ? 'partial' : 'unpaid';
     await supabaseAdmin.from('fee_invoices').update({ status: newStatus }).eq('id', req.params.id);
 
-    return res.status(201).json({ data, message: `Payment recorded. Invoice status: ${newStatus}` });
-  } catch { return res.status(500).json({ error: 'Failed to record payment' }); }
+    await writeAuditLog({
+      userId: req.user.id,
+      action: 'PAYMENT',
+      tableName: 'fee_payments',
+      recordId: paymentRecord.id,
+      newData: {
+        invoice_id: req.params.id,
+        amount: numAmount,
+        payment_mode,
+        total_paid: newTotalPaid,
+        remaining_balance: remainingAfter,
+        status: newStatus
+      },
+      ipAddress: req.ip
+    });
+
+    return res.status(201).json({
+      data: paymentRecord,
+      total_paid: newTotalPaid,
+      remaining_balance: remainingAfter,
+      status: newStatus,
+      message: `Payment of ₹${numAmount.toLocaleString()} recorded. Remaining balance: ₹${remainingAfter.toLocaleString()} (${newStatus.toUpperCase()})`
+    });
+  } catch (err) {
+    logger.error('Record payment error:', err);
+    return res.status(500).json({ error: err?.message || 'Failed to record payment' });
+  }
+});
+
+router.post('/:id/payment', authorize(...STU_ROLES, 'finance'), async (req, res) => {
+  try {
+    const studentId = req.params.id;
+    const { amount, payment_mode = 'cash', transaction_reference = '', payment_date, notes } = req.body;
+    const numAmount = Number(amount);
+    if (!numAmount || numAmount <= 0) {
+      return res.status(400).json({ error: 'Please enter a valid payment amount greater than zero' });
+    }
+
+    const { data: invoices, error: invErr } = await supabaseAdmin.from('fee_invoices')
+      .select('*, fee_payments(amount)')
+      .eq('student_id', studentId)
+      .order('created_at', { ascending: false });
+
+    if (invErr || !invoices || invoices.length === 0) {
+      return res.status(404).json({ error: 'No fee invoice found for this student.' });
+    }
+
+    const inv = invoices.find(i => i.status !== 'paid') || invoices[0];
+    const totalInvoiceAmount = Number(inv.total_amount || 0);
+    const existingPaid = (inv.fee_payments || []).reduce((s, p) => s + Number(p.amount || 0), 0);
+    const remainingBefore = Math.max(0, totalInvoiceAmount - existingPaid);
+
+    if (numAmount > remainingBefore) {
+      return res.status(400).json({
+        error: `Payment amount (₹${numAmount.toLocaleString()}) exceeds remaining balance of ₹${remainingBefore.toLocaleString()}`
+      });
+    }
+
+    const { data: paymentRecord, error } = await supabaseAdmin.from('fee_payments').insert({
+      invoice_id: inv.id,
+      amount: numAmount,
+      payment_mode,
+      transaction_reference: transaction_reference || null,
+      payment_date: payment_date || new Date().toISOString().split('T')[0],
+      notes: notes || null,
+      received_by: req.user.id,
+    }).select().single();
+    if (error) throw error;
+
+    const newTotalPaid = existingPaid + numAmount;
+    const remainingAfter = Math.max(0, totalInvoiceAmount - newTotalPaid);
+    const newStatus = remainingAfter <= 0 ? 'paid' : newTotalPaid > 0 ? 'partial' : 'unpaid';
+    await supabaseAdmin.from('fee_invoices').update({ status: newStatus }).eq('id', inv.id);
+
+    return res.status(201).json({
+      data: paymentRecord,
+      total_paid: newTotalPaid,
+      remaining_balance: remainingAfter,
+      status: newStatus,
+      message: `Payment of ₹${numAmount.toLocaleString()} recorded. Remaining balance: ₹${remainingAfter.toLocaleString()} (${newStatus.toUpperCase()})`
+    });
+  } catch (err) {
+    logger.error('Record student payment error:', err);
+    return res.status(500).json({ error: err?.message || 'Failed to record payment' });
+  }
 });
 
 // ── Exams & Results ─────────────────────────────────────

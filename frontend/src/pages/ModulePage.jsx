@@ -322,20 +322,31 @@ function StudentsModule() {
   };
 
   // Record Payment Handler
-  const handleRecordPayment = async () => {
-    if (!selectedInvoiceForPay) return;
+  const handleRecordPayment = async (targetInv = null) => {
+    const invToPay = targetInv || selectedInvoiceForPay || invoice;
+    if (!invToPay) return toast.error('No invoice found to record payment against');
     const amount = Number(payForm.amount);
     if (!amount || amount <= 0) return toast.error('Please enter a valid payment amount');
 
+    const invPayments = invToPay.fee_payments || [];
+    const currPaid = invPayments.reduce((s, p) => s + Number(p.amount || 0), 0);
+    const currRem = Math.max(0, Number(invToPay.total_amount || 0) - currPaid);
+    if (amount > currRem) {
+      return toast.error(`Amount exceeds remaining balance of ₹${currRem.toLocaleString()}`);
+    }
+
     setRecordingPay(true);
     try {
-      await studentApi.recordPayment(selectedInvoiceForPay.id, {
+      const res = await studentApi.recordPayment(invToPay.id, {
         amount,
         payment_mode: payForm.payment_mode,
         transaction_reference: payForm.transaction_reference,
         payment_date: payForm.payment_date,
       });
-      toast.success('Payment recorded successfully');
+      const remainingMsg = res.data?.remaining_balance !== undefined
+        ? `Remaining Balance: ₹${Number(res.data.remaining_balance).toLocaleString()}`
+        : '';
+      toast.success(`Payment of ₹${amount.toLocaleString()} recorded! ${remainingMsg}`);
       setShowPayModal(false);
       setPayForm({
         amount: '',
@@ -409,16 +420,29 @@ function StudentsModule() {
       },
     },
     {
-      header: 'Fee & Status',
+      header: 'Fee & Remaining',
       render: (r) => {
         const inv = r.fee_invoices?.[0];
         if (!inv) return <span className="text-xs text-slate-400">—</span>;
+        const payments = (r.fee_invoices || []).flatMap(i => i.fee_payments || []);
+        const paid = payments.reduce((s, p) => s + Number(p.amount || 0), 0);
+        const total = Number(inv.total_amount || 0);
+        const remaining = Math.max(0, total - paid);
         return (
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-black text-slate-900">
-              ₹{Number(inv.total_amount).toLocaleString()}
-            </span>
-            <Badge status={inv.status} />
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-black text-slate-900">
+                ₹{total.toLocaleString()}
+              </span>
+              <Badge status={inv.status} />
+            </div>
+            <div className="text-[11px] flex items-center gap-1.5 flex-wrap">
+              <span className="text-emerald-700 font-semibold">Paid: ₹{paid.toLocaleString()}</span>
+              <span className="text-slate-300">•</span>
+              <span className={`font-bold ${remaining === 0 ? 'text-emerald-700' : 'text-amber-800'}`}>
+                {remaining === 0 ? '✓ Cleared' : `Remaining: ₹${remaining.toLocaleString()}`}
+              </span>
+            </div>
           </div>
         );
       },
@@ -426,23 +450,57 @@ function StudentsModule() {
     { header: 'Admission', render: (r) => <span className="text-xs text-slate-600">{r.admission_date || '—'}</span> },
     {
       header: 'Actions',
-      render: (r) => (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setActiveStudentId(r.id);
-            document.getElementById('in-page-student-structure')?.scrollIntoView({ behavior: 'smooth' });
-          }}
-          className={`text-xs font-bold px-2.5 py-1 rounded-lg border transition-all cursor-pointer ${
-            r.id === activeStudent?.id
-              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-              : 'text-blue-600 hover:text-blue-800 hover:bg-blue-50 border-blue-200'
-          }`}
-        >
-          {r.id === activeStudent?.id ? '✓ Showing Below' : 'View Details ↓'}
-        </button>
-      ),
+      render: (r) => {
+        const inv = r.fee_invoices?.[0];
+        const payments = (r.fee_invoices || []).flatMap(i => i.fee_payments || []);
+        const paid = payments.reduce((s, p) => s + Number(p.amount || 0), 0);
+        const total = Number(inv?.total_amount || 0);
+        const remaining = Math.max(0, total - paid);
+        const isSelected = r.id === activeStudent?.id;
+
+        return (
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveStudentId(r.id);
+                setDetailTab('fees');
+                document.getElementById('in-page-student-structure')?.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className={`text-xs font-bold px-2.5 py-1 rounded-lg border transition-all cursor-pointer ${
+                isSelected
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                  : 'text-blue-600 hover:text-blue-800 hover:bg-blue-50 border-blue-200'
+              }`}
+            >
+              {isSelected ? '✓ Showing Below' : 'View Details ↓'}
+            </button>
+
+            {inv && remaining > 0 && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveStudentId(r.id);
+                  setSelectedInvoiceForPay(inv);
+                  setPayForm({
+                    amount: '',
+                    payment_mode: 'cash',
+                    transaction_reference: '',
+                    payment_date: new Date().toISOString().split('T')[0],
+                  });
+                  setShowPayModal(true);
+                }}
+                className="text-xs font-bold px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-600 cursor-pointer shadow-2xs"
+                title="Quick record payment for this student"
+              >
+                + Add Pay
+              </button>
+            )}
+          </div>
+        );
+      },
     },
   ];
 
@@ -701,41 +759,264 @@ function StudentsModule() {
                   </div>
                 )}
 
-                {/* Payment Progress */}
+                {/* 3-Stat Financial Summary */}
+                <div className="grid grid-cols-3 gap-2.5 text-xs">
+                  <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+                    <span className="text-[10px] text-slate-400 font-semibold uppercase block">Total Payable Fee</span>
+                    <p className="text-base font-black text-slate-900 mt-0.5">
+                      ₹{totalPayable.toLocaleString()}
+                    </p>
+                    <span className="text-[10px] text-slate-500">Course & GST</span>
+                  </div>
+
+                  <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-200 shadow-2xs">
+                    <span className="text-[10px] text-emerald-700 font-semibold uppercase block">Total Amount Paid</span>
+                    <p className="text-base font-black text-emerald-800 mt-0.5">
+                      ₹{totalPaid.toLocaleString()}
+                    </p>
+                    <span className="text-[10px] text-emerald-600 font-medium">
+                      {allPayments.length} payment(s) made
+                    </span>
+                  </div>
+
+                  <div className={`p-3 rounded-xl border shadow-2xs ${
+                    balanceDue === 0 && totalPayable > 0
+                      ? 'bg-emerald-100/60 border-emerald-300'
+                      : 'bg-amber-50 border-amber-300'
+                  }`}>
+                    <span className={`text-[10px] font-bold uppercase block ${
+                      balanceDue === 0 && totalPayable > 0 ? 'text-emerald-800' : 'text-amber-800'
+                    }`}>
+                      Remaining Balance Due
+                    </span>
+                    <p className={`text-base font-black mt-0.5 ${
+                      balanceDue === 0 && totalPayable > 0 ? 'text-emerald-900' : 'text-amber-900'
+                    }`}>
+                      {balanceDue === 0 && totalPayable > 0 ? '₹0' : `₹${balanceDue.toLocaleString()}`}
+                    </p>
+                    <span className={`text-[10px] font-bold ${
+                      balanceDue === 0 && totalPayable > 0 ? 'text-emerald-700' : 'text-amber-700'
+                    }`}>
+                      {balanceDue === 0 && totalPayable > 0 ? '✓ Paid in Full' : `${paymentPct}% paid (${100 - paymentPct}% left)`}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Payment Progress Bar */}
                 <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5 text-xs">
                   <div className="flex items-center justify-between font-bold">
                     <span className="text-slate-700">Fee Payment Progress</span>
                     <span className="text-blue-700">{paymentPct}% Paid</span>
                   </div>
-                  <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                  <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
                     <div
-                      className="bg-emerald-500 h-full rounded-full transition-all duration-500"
+                      className="bg-gradient-to-r from-blue-500 to-emerald-500 h-full rounded-full transition-all duration-500"
                       style={{ width: `${paymentPct}%` }}
                     />
                   </div>
-                  <div className="flex justify-between text-slate-600 font-semibold pt-0.5">
+                  <div className="flex justify-between text-slate-600 font-semibold pt-0.5 text-[11px]">
                     <span>Total Paid: <strong className="text-emerald-700">₹{totalPaid.toLocaleString()}</strong></span>
-                    <span>Balance Due: <strong className="text-amber-700">₹{balanceDue.toLocaleString()}</strong></span>
+                    <span>Remaining Balance: <strong className={balanceDue === 0 ? 'text-emerald-700' : 'text-amber-700'}>₹{balanceDue.toLocaleString()}</strong></span>
                   </div>
                 </div>
 
-                {/* Ledger */}
-                {invoices.length > 0 && (
-                  <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100 bg-white text-xs">
-                    {invoices.map(inv => (
-                      <div key={inv.id} className="p-3 flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <span className="font-mono font-bold text-slate-900">{inv.invoice_number}</span>
-                          <span className="text-slate-400 ml-2">Due: {inv.due_date || 'On enrollment'}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-black text-slate-900">₹{Number(inv.total_amount).toLocaleString()}</span>
-                          <Badge status={inv.status} />
+                {/* ─── IN-PAGE QUICK ADD PAYMENT SECTION ─── */}
+                {invoice && balanceDue > 0 ? (
+                  <div className="p-4 bg-gradient-to-br from-blue-50/70 via-indigo-50/40 to-white rounded-xl border-2 border-blue-200/80 shadow-xs space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-blue-100 pb-2.5">
+                      <div>
+                        <h4 className="font-black text-slate-900 text-sm flex items-center gap-1.5">
+                          <span>💳</span> Record Student Payment
+                        </h4>
+                        <p className="text-[11px] text-slate-500">
+                          Add the amount paid by {activeStudent.first_name}. Remaining balance updates instantly.
+                        </p>
+                      </div>
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-200">
+                        Balance Due: ₹{balanceDue.toLocaleString()}
+                      </span>
+                    </div>
+
+                    {/* Amount Input with Quick-Fill Chips */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between flex-wrap gap-1">
+                        <label className="text-xs font-bold text-slate-700">
+                          Amount Paid (₹) *
+                        </label>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] text-slate-400 font-semibold">Quick Fill:</span>
+                          {plan?.monthly_installment > 0 && Number(plan.monthly_installment) < balanceDue && (
+                            <button
+                              type="button"
+                              onClick={() => setPayForm(p => ({ ...p, amount: String(Math.min(balanceDue, Number(plan.monthly_installment))) }))}
+                              className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 hover:bg-blue-200 transition-colors"
+                            >
+                              1 EMI (₹{Number(plan.monthly_installment).toLocaleString()})
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setPayForm(p => ({ ...p, amount: String(balanceDue) }))}
+                            className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 hover:bg-emerald-200 transition-colors"
+                          >
+                            Full Balance (₹{balanceDue.toLocaleString()})
+                          </button>
                         </div>
                       </div>
-                    ))}
+
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">₹</span>
+                        <input
+                          type="number"
+                          className="form-control pl-7 text-sm font-bold text-slate-900 bg-white"
+                          placeholder={`Enter amount up to ₹${balanceDue.toLocaleString()}`}
+                          value={payForm.amount}
+                          onChange={e => setPayForm(p => ({ ...p, amount: e.target.value }))}
+                        />
+                      </div>
+
+                      {/* Dynamic Live Remaining Balance Preview */}
+                      {(() => {
+                        const amt = Number(payForm.amount) || 0;
+                        const remAfter = Math.max(0, balanceDue - amt);
+                        if (amt <= 0) {
+                          return (
+                            <div className="p-2 bg-slate-100/80 rounded-lg text-[11px] text-slate-600 font-medium">
+                              💡 Current remaining balance: <strong>₹{balanceDue.toLocaleString()}</strong>. Enter amount paid above.
+                            </div>
+                          );
+                        }
+                        if (amt > balanceDue) {
+                          return (
+                            <div className="p-2 bg-rose-50 border border-rose-200 rounded-lg text-[11px] text-rose-800 font-bold">
+                              ⚠️ Entered amount (₹{amt.toLocaleString()}) exceeds the balance due of ₹{balanceDue.toLocaleString()}!
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className={`p-2.5 rounded-lg border text-xs font-bold transition-all flex items-center justify-between flex-wrap gap-2 ${
+                            remAfter === 0
+                              ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                              : 'bg-blue-50 border-blue-300 text-blue-950'
+                          }`}>
+                            <span>Recording Payment: <strong>₹{amt.toLocaleString()}</strong></span>
+                            <span className="text-[12px]">
+                              Remaining Balance Will Be: <strong className={remAfter === 0 ? 'text-emerald-700 text-sm' : 'text-amber-800 text-sm'}>₹{remAfter.toLocaleString()} {remAfter === 0 ? '🎉 (Paid in Full!)' : ''}</strong>
+                            </span>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* Mode, Date & Reference Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1 text-xs">
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-1">Payment Mode</label>
+                        <select
+                          className="select-control text-xs"
+                          value={payForm.payment_mode}
+                          onChange={e => setPayForm(p => ({ ...p, payment_mode: e.target.value }))}
+                        >
+                          <option value="cash">💵 Cash</option>
+                          <option value="upi">📱 UPI / GPay / PhonePe</option>
+                          <option value="bank_transfer">🏦 Bank Transfer / NEFT</option>
+                          <option value="card">💳 Debit / Credit Card</option>
+                          <option value="cheque">📝 Cheque</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-1">Payment Date</label>
+                        <input
+                          type="date"
+                          className="form-control text-xs"
+                          value={payForm.payment_date}
+                          onChange={e => setPayForm(p => ({ ...p, payment_date: e.target.value }))}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-1">Receipt / Ref No.</label>
+                        <input
+                          type="text"
+                          className="form-control text-xs"
+                          placeholder="e.g. UPI-928374 or Receipt #01"
+                          value={payForm.transaction_reference}
+                          onChange={e => setPayForm(p => ({ ...p, transaction_reference: e.target.value }))}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Submit Button */}
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        disabled={recordingPay || !Number(payForm.amount) || Number(payForm.amount) <= 0 || Number(payForm.amount) > balanceDue}
+                        onClick={() => handleRecordPayment(invoice)}
+                        className="btn-primary btn text-xs py-2 px-5 font-bold shadow-xs cursor-pointer disabled:opacity-50"
+                      >
+                        {recordingPay
+                          ? 'Recording Payment...'
+                          : `✓ Record ₹${Number(payForm.amount || 0).toLocaleString()} Payment`}
+                      </button>
+                    </div>
                   </div>
-                )}
+                ) : balanceDue === 0 && totalPayable > 0 ? (
+                  <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-center gap-2">
+                    <span className="text-lg">🎉</span>
+                    <div>
+                      <strong className="block text-emerald-900 font-bold">All Fees Cleared!</strong>
+                      <span>This student has completed all payments (Remaining Balance: ₹0).</span>
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* ─── PAYMENT HISTORY & RECEIPTS ─── */}
+                <div className="space-y-2 pt-1 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-800 flex items-center gap-1">
+                      <span>🧾</span> Payment History & Receipts
+                    </span>
+                    <span className="text-[11px] text-slate-500 font-medium">
+                      {allPayments.length} Transaction(s)
+                    </span>
+                  </div>
+
+                  {allPayments.length > 0 ? (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100 bg-white">
+                      {allPayments.map((p, idx) => (
+                        <div key={p.id || idx} className="p-3 flex flex-wrap items-center justify-between gap-2 hover:bg-slate-50/50">
+                          <div className="flex items-center gap-2.5">
+                            <span className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold text-xs border border-emerald-200">
+                              ✓
+                            </span>
+                            <div>
+                              <p className="font-bold text-slate-900 text-xs">
+                                Paid via <span className="uppercase text-blue-700">{p.payment_mode || 'Cash'}</span>
+                              </p>
+                              <p className="text-[11px] text-slate-500">
+                                Date: {p.payment_date || 'N/A'} {p.transaction_reference ? `• Ref: ${p.transaction_reference}` : ''}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="text-right">
+                            <span className="text-sm font-black text-emerald-700">
+                              + ₹{Number(p.amount).toLocaleString()}
+                            </span>
+                            <span className="block text-[10px] text-slate-400 font-semibold uppercase">
+                              Received
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-3 text-center text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                      No payments recorded yet for this student. Total due: <strong>₹{totalPayable.toLocaleString()}</strong>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -1164,58 +1445,127 @@ function StudentsModule() {
         <FormModal
           title={`Record Fee Payment (${selectedInvoiceForPay.invoice_number})`}
           onClose={() => setShowPayModal(false)}
-          onSave={handleRecordPayment}
+          onSave={() => handleRecordPayment(selectedInvoiceForPay)}
           saving={recordingPay}
         >
-          <div className="space-y-3">
-            <div>
-              <label className="form-label font-semibold text-slate-700">Payment Amount (₹) *</label>
-              <input
-                type="number"
-                className="form-control"
-                placeholder="e.g. 9145"
-                value={payForm.amount}
-                onChange={e => setPayForm(p => ({ ...p, amount: e.target.value }))}
-              />
-            </div>
+          {(() => {
+            const modalPayments = selectedInvoiceForPay.fee_payments || [];
+            const modalPaid = modalPayments.reduce((s, p) => s + Number(p.amount || 0), 0);
+            const modalTotal = Number(selectedInvoiceForPay.total_amount || 0);
+            const modalRemaining = Math.max(0, modalTotal - modalPaid);
+            const modalInput = Number(payForm.amount) || 0;
+            const modalRemAfter = Math.max(0, modalRemaining - modalInput);
+            const modalPlan = parsePlanFromInvoice(selectedInvoiceForPay);
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="form-label font-semibold text-slate-700">Payment Mode</label>
-                <select
-                  className="select-control"
-                  value={payForm.payment_mode}
-                  onChange={e => setPayForm(p => ({ ...p, payment_mode: e.target.value }))}
-                >
-                  <option value="cash">Cash</option>
-                  <option value="upi">UPI / GPay / PhonePe</option>
-                  <option value="bank_transfer">Bank Transfer / NEFT</option>
-                  <option value="card">Debit / Credit Card</option>
-                  <option value="cheque">Cheque</option>
-                </select>
+            return (
+              <div className="space-y-3.5 text-xs">
+                {/* 3 Summary Badges */}
+                <div className="grid grid-cols-3 gap-2 p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+                  <div>
+                    <span className="text-[10px] text-slate-400 font-bold uppercase block">Total Fee</span>
+                    <span className="text-sm font-black text-slate-800">₹{modalTotal.toLocaleString()}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-emerald-600 font-bold uppercase block">Already Paid</span>
+                    <span className="text-sm font-black text-emerald-700">₹{modalPaid.toLocaleString()}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-amber-700 font-bold uppercase block">Balance Due</span>
+                    <span className="text-sm font-black text-amber-800">₹{modalRemaining.toLocaleString()}</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
+                    <label className="form-label font-bold text-slate-700 mb-0">Payment Amount (₹) *</label>
+                    <div className="flex items-center gap-1">
+                      {modalPlan?.monthly_installment > 0 && Number(modalPlan.monthly_installment) < modalRemaining && (
+                        <button
+                          type="button"
+                          onClick={() => setPayForm(p => ({ ...p, amount: String(Math.min(modalRemaining, Number(modalPlan.monthly_installment))) }))}
+                          className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800 hover:bg-blue-200"
+                        >
+                          1 EMI (₹{Number(modalPlan.monthly_installment).toLocaleString()})
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setPayForm(p => ({ ...p, amount: String(modalRemaining) }))}
+                        className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
+                      >
+                        Full Balance (₹{modalRemaining.toLocaleString()})
+                      </button>
+                    </div>
+                  </div>
+
+                  <input
+                    type="number"
+                    className="form-control text-sm font-bold text-slate-900"
+                    placeholder={`Max ₹${modalRemaining.toLocaleString()}`}
+                    value={payForm.amount}
+                    onChange={e => setPayForm(p => ({ ...p, amount: e.target.value }))}
+                  />
+
+                  {/* Dynamic Remaining Balance Callout */}
+                  <div className="mt-2">
+                    {modalInput <= 0 ? (
+                      <p className="text-[11px] text-slate-500">
+                        Remaining balance before payment: <strong>₹{modalRemaining.toLocaleString()}</strong>
+                      </p>
+                    ) : modalInput > modalRemaining ? (
+                      <p className="text-[11px] text-rose-600 font-bold">
+                        ⚠️ Entered amount exceeds remaining balance of ₹{modalRemaining.toLocaleString()}
+                      </p>
+                    ) : (
+                      <div className={`p-2 rounded-lg border text-xs font-bold flex items-center justify-between ${
+                        modalRemAfter === 0 ? 'bg-emerald-50 text-emerald-900 border-emerald-300' : 'bg-blue-50 text-blue-900 border-blue-200'
+                      }`}>
+                        <span>Recording: <strong>₹{modalInput.toLocaleString()}</strong></span>
+                        <span>Remaining After: <strong className={modalRemAfter === 0 ? 'text-emerald-700' : 'text-amber-800'}>₹{modalRemAfter.toLocaleString()} {modalRemAfter === 0 ? '🎉 (Cleared!)' : ''}</strong></span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="form-label font-semibold text-slate-700">Payment Mode</label>
+                    <select
+                      className="select-control text-xs"
+                      value={payForm.payment_mode}
+                      onChange={e => setPayForm(p => ({ ...p, payment_mode: e.target.value }))}
+                    >
+                      <option value="cash">💵 Cash</option>
+                      <option value="upi">📱 UPI / GPay / PhonePe</option>
+                      <option value="bank_transfer">🏦 Bank Transfer / NEFT</option>
+                      <option value="card">💳 Debit / Credit Card</option>
+                      <option value="cheque">📝 Cheque</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="form-label font-semibold text-slate-700">Payment Date</label>
+                    <input
+                      type="date"
+                      className="form-control text-xs"
+                      value={payForm.payment_date}
+                      onChange={e => setPayForm(p => ({ ...p, payment_date: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="form-label font-semibold text-slate-700">Transaction Reference / Receipt No.</label>
+                  <input
+                    className="form-control text-xs"
+                    placeholder="e.g. UPI-928374928 or Receipt #102"
+                    value={payForm.transaction_reference}
+                    onChange={e => setPayForm(p => ({ ...p, transaction_reference: e.target.value }))}
+                  />
+                </div>
               </div>
-
-              <div>
-                <label className="form-label font-semibold text-slate-700">Payment Date</label>
-                <input
-                  type="date"
-                  className="form-control"
-                  value={payForm.payment_date}
-                  onChange={e => setPayForm(p => ({ ...p, payment_date: e.target.value }))}
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="form-label font-semibold text-slate-700">Transaction Reference / Receipt No.</label>
-              <input
-                className="form-control"
-                placeholder="e.g. UPI-928374928 or Receipt #102"
-                value={payForm.transaction_reference}
-                onChange={e => setPayForm(p => ({ ...p, transaction_reference: e.target.value }))}
-              />
-            </div>
-          </div>
+            );
+          })()}
         </FormModal>
       )}
     </>

@@ -92,6 +92,7 @@ export const studentApi = {
   invoices: (id) => api.get(`/students/${id}/invoices`),
   createInvoice: (id, data) => api.post(`/students/${id}/invoices`, data),
   recordPayment: (invoiceId, data) => api.post(`/students/invoices/${invoiceId}/payment`, data),
+  recordStudentPayment: (studentId, data) => api.post(`/students/${studentId}/payment`, data),
   exams: (params) => api.get('/students/exams/list', { params }),
   createExam: (data) => api.post('/students/exams', data),
   saveResults: (examId, data) => api.post(`/students/exams/${examId}/results`, data),

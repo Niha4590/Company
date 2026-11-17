@@ -291,6 +291,49 @@ export default function StudentPortalPage() {
               </div>
             )}
 
+            {/* 3-Stat Financial Overview */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                <span className="text-[11px] text-slate-400 font-bold uppercase block">Total Course Fee</span>
+                <p className="text-lg font-black text-slate-900 mt-0.5">
+                  ₹{totalPayable.toLocaleString()}
+                </p>
+                <span className="text-[11px] text-slate-500">Includes GST & Savings</span>
+              </div>
+
+              <div className="bg-emerald-50/70 p-3.5 rounded-xl border border-emerald-200">
+                <span className="text-[11px] text-emerald-700 font-bold uppercase block">Total Amount Paid</span>
+                <p className="text-lg font-black text-emerald-800 mt-0.5">
+                  ₹{totalPaid.toLocaleString()}
+                </p>
+                <span className="text-[11px] text-emerald-600 font-medium">
+                  {allPayments.length} payment(s) credited
+                </span>
+              </div>
+
+              <div className={`p-3.5 rounded-xl border ${
+                balanceDue === 0 && totalPayable > 0
+                  ? 'bg-emerald-100/60 border-emerald-300'
+                  : 'bg-amber-50 border-amber-300'
+              }`}>
+                <span className={`text-[11px] font-bold uppercase block ${
+                  balanceDue === 0 && totalPayable > 0 ? 'text-emerald-800' : 'text-amber-800'
+                }`}>
+                  Remaining Balance Due
+                </span>
+                <p className={`text-lg font-black mt-0.5 ${
+                  balanceDue === 0 && totalPayable > 0 ? 'text-emerald-900' : 'text-amber-900'
+                }`}>
+                  {balanceDue === 0 && totalPayable > 0 ? '₹0' : `₹${balanceDue.toLocaleString()}`}
+                </p>
+                <span className={`text-[11px] font-bold ${
+                  balanceDue === 0 && totalPayable > 0 ? 'text-emerald-700' : 'text-amber-700'
+                }`}>
+                  {balanceDue === 0 && totalPayable > 0 ? '✓ All Fees Paid' : `${paymentPercentage}% paid (${100 - paymentPercentage}% left)`}
+                </span>
+              </div>
+            </div>
+
             {/* Payment Progress Bar */}
             <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
               <div className="flex items-center justify-between text-xs font-bold">
@@ -304,55 +347,56 @@ export default function StudentPortalPage() {
                 />
               </div>
               <div className="flex justify-between text-xs text-slate-500 pt-1">
-                <span>Total Paid: <strong className="text-slate-900">₹{totalPaid.toLocaleString()}</strong></span>
-                <span>Balance Due: <strong className="text-amber-700">₹{balanceDue.toLocaleString()}</strong></span>
+                <span>Total Paid: <strong className="text-emerald-700">₹{totalPaid.toLocaleString()}</strong></span>
+                <span>Remaining Balance: <strong className={balanceDue === 0 ? 'text-emerald-700' : 'text-amber-700'}>₹{balanceDue.toLocaleString()}</strong></span>
               </div>
             </div>
 
-            {/* Invoices & Recorded Transactions */}
+            {/* Itemized Payment History & Receipts */}
             <div className="space-y-3 pt-2">
               <h4 className="font-bold text-slate-900 text-sm flex items-center justify-between">
-                <span>🧾 Invoices & Payment History</span>
-                <span className="text-xs font-normal text-slate-500">{invoices.length} Invoice(s)</span>
+                <span>🧾 Payment Receipts & History</span>
+                <span className="text-xs font-normal text-slate-500">{allPayments.length} Payment(s)</span>
               </h4>
 
-              {invoices.length > 0 ? (
+              {allPayments.length > 0 ? (
                 <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden bg-white">
-                  {invoices.map((inv) => (
-                    <div key={inv.id} className="p-3.5 flex flex-wrap items-center justify-between gap-3 hover:bg-slate-50/50">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-bold text-slate-800">{inv.invoice_number}</span>
-                          <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
-                            inv.status === 'paid'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : inv.status === 'partial'
-                              ? 'bg-blue-100 text-blue-800'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}>
-                            {inv.status}
-                          </span>
+                  {allPayments.map((p, idx) => (
+                    <div key={p.id || idx} className="p-3.5 flex flex-wrap items-center justify-between gap-3 hover:bg-slate-50/50">
+                      <div className="flex items-center gap-3">
+                        <span className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold text-sm border border-emerald-200">
+                          ✓
+                        </span>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-900 text-sm">
+                              Payment via <span className="uppercase text-blue-700">{p.payment_mode || 'Cash'}</span>
+                            </span>
+                            <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                              Verified
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            Date: {p.payment_date || 'N/A'} {p.transaction_reference ? `• Ref / Receipt: ${p.transaction_reference}` : ''}
+                          </p>
                         </div>
-                        <p className="text-xs text-slate-400 mt-0.5">
-                          Due Date: {inv.due_date || 'On enrollment'}
-                        </p>
                       </div>
 
                       <div className="text-right">
-                        <span className="text-sm font-black text-slate-900">
-                          ₹{Number(inv.total_amount).toLocaleString()}
+                        <span className="text-base font-black text-emerald-700">
+                          + ₹{Number(p.amount).toLocaleString()}
                         </span>
-                        <div className="text-[11px] text-slate-500">
-                          Payments: {inv.fee_payments?.length || 0} recorded
+                        <div className="text-[11px] text-slate-400 font-medium">
+                          Credited to institute
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-slate-400 text-center py-4 bg-slate-50 rounded-xl">
-                  No invoices issued yet.
-                </p>
+                <div className="p-4 text-center text-slate-400 text-xs bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                  No payment transactions recorded yet. Balance due: <strong>₹{balanceDue.toLocaleString()}</strong>.
+                </div>
               )}
             </div>
           </div>
