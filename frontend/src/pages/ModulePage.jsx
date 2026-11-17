@@ -314,6 +314,7 @@ function CoursesModule() {
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [selectedEmiCourse, setSelectedEmiCourse] = useState(null);
+  const [isModalFullScreen, setIsModalFullScreen] = useState(false);
   const [cForm, setCForm] = useState({
     name: '',
     code: '',
@@ -754,138 +755,222 @@ function CoursesModule() {
         const modalDetails = calculateFeeDetails(selectedEmiCourse.fee_amount, allowedPlans);
 
         return (
-          <div className="modal-overlay" onClick={() => setSelectedEmiCourse(null)}>
-            <div className="modal max-w-xl max-h-[85vh] flex flex-col my-auto" onClick={(e) => e.stopPropagation()}>
-              <div className="modal-header sticky top-0 bg-white z-20 px-6 py-4 border-b border-slate-200 shrink-0 flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <span className="text-xl">💳</span>
+          <div className="modal-overlay p-2 sm:p-4" onClick={() => setSelectedEmiCourse(null)}>
+            <div
+              className={`${
+                isModalFullScreen
+                  ? 'fixed inset-2 sm:inset-4 z-50'
+                  : 'w-[96vw] max-w-6xl max-h-[92vh]'
+              } bg-white rounded-2xl shadow-2xl flex flex-col my-auto transition-all duration-200 overflow-hidden`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="modal-header sticky top-0 bg-white z-20 px-5 py-3.5 border-b border-slate-200 shrink-0 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">💳</span>
                   <div>
-                    <h2 className="text-lg font-bold text-slate-900 leading-tight">Discounted Payment & EMI Options</h2>
-                    <p className="text-xs font-semibold text-blue-600 mt-0.5">{selectedEmiCourse.name}</p>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-lg sm:text-xl font-black text-slate-900 leading-tight">Discounted Payment & EMI Options</h2>
+                      <span className="text-[11px] font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full hidden sm:inline-block">
+                        All Plans at a Glance
+                      </span>
+                    </div>
+                    <p className="text-xs font-semibold text-blue-600 mt-0.5">
+                      Course: {selectedEmiCourse.name} {selectedEmiCourse.code ? `• ${selectedEmiCourse.code}` : ''}
+                    </p>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedEmiCourse(null)}
-                  className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 text-2xl font-bold cursor-pointer transition-all"
-                >
-                  &times;
-                </button>
+
+                <div className="flex items-center gap-2">
+                  {/* Full Screen Toggle Button */}
+                  <button
+                    type="button"
+                    onClick={() => setIsModalFullScreen(p => !p)}
+                    className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-100 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all"
+                    title={isModalFullScreen ? "Exit Fullscreen" : "View in Fullscreen"}
+                  >
+                    {isModalFullScreen ? (
+                      <>
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9L4 4m0 0l5 0m-5 0l0 5M15 9l5-5m0 0l-5 0m5 0l0 5M9 15l-5 5m0 0l5 0m-5 0l0-5M15 15l5 5m0 0l-5 0m5 0l0-5" />
+                        </svg>
+                        <span>Standard Size</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0 0l-5-5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                        </svg>
+                        <span>Full Screen</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedEmiCourse(null)}
+                    className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 text-2xl font-bold cursor-pointer transition-all"
+                  >
+                    &times;
+                  </button>
+                </div>
               </div>
 
-              <div className="modal-body overflow-y-auto flex-1 p-6 space-y-4">
-                {/* Standard Fee Summary */}
-                <div className="p-3.5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl space-y-2">
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                    <div>
-                      <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Base Fee</div>
-                      <div className="text-base font-bold text-slate-900 mt-0.5">₹{modalDetails.base.toLocaleString()}</div>
-                    </div>
-                    <div>
-                      <div className="text-[11px] font-semibold text-amber-700 uppercase tracking-wider">GST (18%)</div>
-                      <div className="text-base font-bold text-amber-700 mt-0.5">+₹{modalDetails.gst.toLocaleString()}</div>
-                    </div>
-                    <div>
-                      <div className="text-[11px] font-semibold text-blue-800 uppercase tracking-wider">Standard Total</div>
-                      <div className="text-lg font-black text-blue-950 mt-0.5">₹{modalDetails.total.toLocaleString()}</div>
-                    </div>
+              {/* Body: Side-by-side Layout with No Scroll */}
+              <div className="modal-body overflow-y-auto flex-1 p-4 sm:p-5 flex flex-col justify-between gap-3">
+                {/* Compact Fee Summary */}
+                <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-50/90 to-indigo-50/90 border border-blue-200 rounded-xl shrink-0">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Fee Structure:</span>
+                    <span className="text-xs text-slate-700">Base: <strong className="text-slate-900">₹{modalDetails.base.toLocaleString()}</strong></span>
+                    <span className="text-slate-300">•</span>
+                    <span className="text-xs text-amber-700 font-semibold">+ 18% GST: <strong>₹{modalDetails.gst.toLocaleString()}</strong></span>
+                    <span className="text-slate-300">•</span>
+                    <span className="text-xs text-blue-900 font-semibold">Standard Total: <strong>₹{modalDetails.total.toLocaleString()}</strong></span>
                   </div>
+                  {selectedEmiCourse.duration_months && (
+                    <span className="text-xs font-semibold text-slate-600 bg-white border border-slate-200 px-2 py-0.5 rounded-md">
+                      Duration: {selectedEmiCourse.duration_months} Months
+                    </span>
+                  )}
                 </div>
 
-                {/* Option 1: Cash Payment (15% Discount) */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                      💵 Option 1: Cash Payment
-                    </span>
-                    <span className="text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full">
-                      15% SPECIAL DISCOUNT
-                    </span>
-                  </div>
-                  <div className="p-3.5 rounded-xl border border-emerald-300 bg-emerald-50 flex items-center justify-between">
+                {/* Side-by-side Grid: Left Cash (4 cols) & Right EMI (8 cols) */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 flex-1 items-stretch">
+                  {/* Option 1: Cash Payment (4/12 width) */}
+                  <div className="lg:col-span-4 p-4 rounded-xl border border-emerald-300 bg-gradient-to-b from-emerald-50/90 to-emerald-50/40 flex flex-col justify-between shadow-xs">
                     <div>
-                      <div className="font-bold text-sm text-emerald-950">One-Time Settlement</div>
-                      <div className="text-xs text-emerald-700 mt-0.5">
-                        Base: ₹{modalDetails.cash.baseAmount.toLocaleString()} + 18% GST: ₹{modalDetails.cash.gstAmount.toLocaleString()}
+                      <div className="flex items-center justify-between mb-2.5">
+                        <span className="text-xs font-black text-emerald-950 uppercase tracking-wide flex items-center gap-1.5">
+                          <span>💵</span> Option 1: Cash Payment
+                        </span>
+                        <span className="text-[10px] font-black bg-emerald-200 text-emerald-950 px-2 py-0.5 rounded-full border border-emerald-300">
+                          15% DISCOUNT
+                        </span>
                       </div>
-                      <div className="text-xs font-bold text-emerald-800 mt-1">
-                        🎉 Instant Savings: ₹{modalDetails.cash.discountAmount.toLocaleString()} (15% OFF)
+
+                      <div className="bg-white border border-emerald-200 rounded-xl p-3 text-center mb-2.5 shadow-xs">
+                        <div className="text-[11px] text-slate-400 line-through">Standard Total: ₹{modalDetails.total.toLocaleString()}</div>
+                        <div className="text-2xl font-black text-emerald-950 mt-0.5">
+                          ₹{modalDetails.cash.totalAmount.toLocaleString()}
+                        </div>
+                        <div className="text-xs font-bold text-emerald-700 mt-1">
+                          🎉 Instant Savings: ₹{modalDetails.cash.discountAmount.toLocaleString()} (15% OFF)
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5 text-xs text-slate-600 bg-emerald-100/40 p-2.5 rounded-lg border border-emerald-200/60">
+                        <div className="flex justify-between">
+                          <span>Discounted Base:</span>
+                          <span className="font-semibold text-slate-800">₹{modalDetails.cash.baseAmount.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>18% GST on Base:</span>
+                          <span className="font-semibold text-slate-800">₹{modalDetails.cash.gstAmount.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between pt-1 border-t border-emerald-200 font-bold text-emerald-900">
+                          <span>Payment Term:</span>
+                          <span>1 Upfront Settlement</span>
+                        </div>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="line-through text-slate-400 text-xs">₹{modalDetails.total.toLocaleString()}</div>
-                      <div className="text-xs uppercase font-semibold text-emerald-700">Net Payable</div>
-                      <div className="text-2xl font-black text-emerald-950">₹{modalDetails.cash.totalAmount.toLocaleString()}</div>
+
+                    <div className="text-center text-[11px] font-semibold text-emerald-800 bg-white/70 py-1.5 rounded-lg border border-emerald-200 mt-2">
+                      ✓ 100% upfront settlement with maximum savings
                     </div>
                   </div>
-                </div>
 
-                {/* Option 2: EMI Options with 7% on 4,6,8 and 0% on 15 */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                      💳 Option 2: EMI Payment Plans
-                    </span>
-                    <span className="text-xs font-bold text-blue-700">
-                      4, 6, 8 EMI: 7% OFF · 15 EMI: No Discount
-                    </span>
-                  </div>
+                  {/* Option 2: EMI Payment Plans (8/12 width) */}
+                  <div className="lg:col-span-8 p-4 rounded-xl border border-blue-200 bg-gradient-to-b from-blue-50/50 to-slate-50/30 flex flex-col justify-between shadow-xs">
+                    <div>
+                      <div className="flex items-center justify-between mb-2.5">
+                        <span className="text-xs font-black text-blue-950 uppercase tracking-wide flex items-center gap-1.5">
+                          <span>💳</span> Option 2: EMI Payment Plans
+                        </span>
+                        <span className="text-[11px] font-bold text-blue-700 bg-blue-100 border border-blue-200 px-2 py-0.5 rounded-full">
+                          4, 6, 8 EMI: 7% OFF • 15 EMI: No Discount
+                        </span>
+                      </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {modalDetails.emiOptions.map(plan => (
-                      <div key={plan.key} className={`p-3 rounded-xl border ${plan.badgeClass} flex flex-col justify-between shadow-xs`}>
-                        <div>
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-sm text-slate-900">{plan.fullName}</span>
-                            {plan.discountPercent > 0 ? (
-                              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-emerald-200 text-emerald-900 border border-emerald-300">
-                                7% DISCOUNT
-                              </span>
-                            ) : (
-                              <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded bg-slate-200 text-slate-700">
-                                TOTAL EMI (NO DISC.)
-                              </span>
-                            )}
-                          </div>
+                      {/* 4 Cards Grid side-by-side */}
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+                        {modalDetails.emiOptions.map(plan => (
+                          <div key={plan.key} className={`p-2.5 rounded-xl border ${plan.badgeClass} bg-white flex flex-col justify-between shadow-xs hover:border-blue-400 transition-all`}>
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="font-extrabold text-xs text-slate-900">{plan.label}</span>
+                                {plan.discountPercent > 0 ? (
+                                  <span className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-900 border border-emerald-300">
+                                    7% OFF
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] font-semibold uppercase px-1 py-0.2 rounded bg-slate-100 text-slate-500">
+                                    Total EMI
+                                  </span>
+                                )}
+                              </div>
 
-                          <div className="text-xl font-black text-slate-900 mt-2">
-                            ₹{plan.installmentTotal.toLocaleString()}
-                            <span className="text-xs font-medium text-slate-600"> / month</span>
-                          </div>
+                              <div className="text-base font-black text-slate-900 mt-0.5">
+                                ₹{plan.installmentTotal.toLocaleString()}
+                                <span className="text-[10px] font-normal text-slate-500"> / mo</span>
+                              </div>
 
-                          {plan.discountPercent > 0 && (
-                            <div className="text-[11px] text-slate-400 line-through">
-                              Standard: ₹{plan.originalInstallment.toLocaleString()} / mo
+                              {plan.discountPercent > 0 ? (
+                                <div className="text-[10px] text-slate-400 line-through">
+                                  Std: ₹{plan.originalInstallment.toLocaleString()}/mo
+                                </div>
+                              ) : (
+                                <div className="text-[10px] text-slate-400">
+                                  Standard total
+                                </div>
+                              )}
+
+                              <div className="text-[10px] text-slate-500 mt-1">
+                                Base: ₹{plan.installmentBase.toLocaleString()} + GST: ₹{plan.installmentGst.toLocaleString()}
+                              </div>
                             </div>
-                          )}
 
-                          <div className="text-[11px] text-slate-600 mt-1">
-                            Base: ₹{plan.installmentBase.toLocaleString()} + 18% GST: ₹{plan.installmentGst.toLocaleString()}
+                            <div className="text-[10px] mt-2 pt-1.5 border-t border-slate-100 text-slate-600 font-medium">
+                              <div className="flex justify-between">
+                                <span>Duration:</span>
+                                <span className="font-semibold text-slate-800">{plan.months} Months</span>
+                              </div>
+                              <div className="flex justify-between mt-0.5">
+                                <span>Total:</span>
+                                <span className="font-bold text-slate-900">₹{plan.totalAmount.toLocaleString()}</span>
+                              </div>
+                              {plan.discountPercent > 0 ? (
+                                <div className="text-emerald-700 text-[10px] font-bold text-right mt-0.5">
+                                  Save ₹{plan.discountAmount.toLocaleString()}
+                                </div>
+                              ) : (
+                                <div className="text-slate-400 text-[10px] text-right mt-0.5">
+                                  0% discount
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </div>
-
-                        <div className="text-xs mt-3 pt-2 border-t border-black/10 flex justify-between text-slate-700 font-medium">
-                          <span>{plan.months} Monthly Installments</span>
-                          <span className="font-bold text-slate-900">
-                            Total: ₹{plan.totalAmount.toLocaleString()}
-                            {plan.discountPercent > 0 && (
-                              <span className="text-emerald-700 font-semibold block text-right">
-                                Save ₹{plan.discountAmount.toLocaleString()}
-                              </span>
-                            )}
-                          </span>
-                        </div>
+                        ))}
                       </div>
-                    ))}
+                    </div>
+
+                    <div className="text-xs text-slate-500 flex items-center justify-between px-1 mt-2">
+                      <span>💡 Installments include 18% GST. No hidden fees.</span>
+                      <span className="font-semibold text-blue-700">4, 6, 8, 15 Months EMI Plans</span>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="modal-footer sticky bottom-0 bg-white z-20 px-6 py-3.5 border-t border-slate-200 shrink-0 flex justify-end">
+              {/* Footer */}
+              <div className="modal-footer sticky bottom-0 bg-white z-20 px-5 py-2.5 border-t border-slate-200 shrink-0 flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-medium hidden sm:inline">
+                  Viewing full comparison of Cash and EMI plans
+                </span>
                 <button
                   type="button"
                   onClick={() => setSelectedEmiCourse(null)}
-                  className="btn-primary btn"
+                  className="btn-primary btn text-xs py-1.5 px-5"
                 >
                   Close
                 </button>
