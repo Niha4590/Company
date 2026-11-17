@@ -2,6 +2,14 @@ import { useState, useEffect, useCallback } from 'react';
 import { studentApi, operationApi, reportApi } from '../api';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
+import {
+  GST_PERCENT,
+  EMI_MONTHS_LIST,
+  calculateFeeDetails,
+  parseCoursePlans,
+  stripPlansFromDesc,
+  parsePlanFromInvoice,
+} from '../utils/feeCalculator';
 
 // ─── Reusable sub-components ─────────────────────────────────
 function DataTable({ columns, rows, loading, onRowClick, emptyIcon, emptyText }) {
@@ -21,7 +29,7 @@ function DataTable({ columns, rows, loading, onRowClick, emptyIcon, emptyText })
               </td>
             </tr>
           ) : rows.map((row, i) => (
-            <tr key={row.id || i} onClick={onRowClick ? () => onRowClick(row) : undefined}>
+            <tr key={row.id || i} onClick={onRowClick ? () => onRowClick(row) : undefined} className={onRowClick ? "cursor-pointer hover:bg-slate-50/80 transition-colors" : ""}>
               {columns.map((c, j) => <td key={j}>{c.render ? c.render(row) : row[c.key]}</td>)}
             </tr>
           ))}
@@ -31,10 +39,10 @@ function DataTable({ columns, rows, loading, onRowClick, emptyIcon, emptyText })
   );
 }
 
-function FormModal({ title, children, onClose, onSave, saving }) {
+function FormModal({ title, children, onClose, onSave, saving, maxWidth = "max-w-lg" }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal max-w-lg max-h-[85vh] flex flex-col my-auto" onClick={(e) => e.stopPropagation()}>
+      <div className={`modal ${maxWidth} max-h-[88vh] flex flex-col my-auto`} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header sticky top-0 bg-white z-20 px-6 py-4 border-b border-slate-200 shrink-0 flex items-center justify-between">
           <h2 className="text-lg font-bold text-slate-900">{title}</h2>
           <button
@@ -71,87 +79,1138 @@ function Badge({ status }) {
   return <span className={m[status] || 'badge-gray'}>{status?.replace(/_/g, ' ')}</span>;
 }
 
-// ─── STUDENTS PAGE ───────────────────────────────────────────
+// ─── STUDENTS PAGE (Admin Management & Admission View) ────────
 function StudentsModule() {
   const [students, setStudents] = useState([]);
+  const [courses, setCourses] = useState([]);
+  const [batches, setBatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [search, setSearch] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Admin View Student Drawer/Modal State
+  const [selectedStudent, setSelectedStudent] = useState(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [detailTab, setDetailTab] = useState('fees'); // 'fees' | 'profile' | 'change_plan'
+
+  // Payment Recording Modal State
+  const [showPayModal, setShowPayModal] = useState(false);
+  const [selectedInvoiceForPay, setSelectedInvoiceForPay] = useState(null);
+  const [payForm, setPayForm] = useState({
+    amount: '',
+    payment_mode: 'cash',
+    transaction_reference: '',
+    payment_date: new Date().toISOString().split('T')[0],
+  });
+  const [recordingPay, setRecordingPay] = useState(false);
+
+  // Plan Assignment/Change State
+  const [changePlanForm, setChangePlanForm] = useState({
+    course_id: '',
+    batch_id: '',
+    payment_plan: 'cash',
+  });
+  const [savingPlan, setSavingPlan] = useState(false);
+
+  // Add Student Form State
   const [form, setForm] = useState({
-    first_name: '', last_name: '', email: '', phone: '',
-    date_of_birth: '', gender: '', address: '',
-    guardian_name: '', guardian_phone: '',
+    first_name: '',
+    last_name: '',
+    email: '',
+    phone: '',
+    date_of_birth: '',
+    gender: '',
+    address: '',
+    guardian_name: '',
+    guardian_phone: '',
     admission_date: new Date().toISOString().split('T')[0],
+    course_id: '',
+    batch_id: '',
+    payment_plan: 'cash', // 'cash' | 'emi_4' | 'emi_6' | 'emi_8' | 'emi_15'
   });
 
   const fetch_ = useCallback(() => {
     setLoading(true);
-    studentApi.list({ search, limit: 50 })
-      .then(({ data }) => setStudents(data.data || []))
-      .catch(() => toast.error('Failed'))
+    Promise.all([
+      studentApi.list({ search, limit: 100 }),
+      studentApi.courses(),
+      studentApi.batches({}),
+    ])
+      .then(([sRes, cRes, bRes]) => {
+        setStudents(sRes.data.data || []);
+        setCourses(cRes.data.data || []);
+        setBatches(bRes.data.data || []);
+      })
+      .catch(() => toast.error('Failed to load students data'))
       .finally(() => setLoading(false));
   }, [search]);
 
   useEffect(() => { fetch_(); }, [fetch_]);
 
+  const openStudentDetails = async (stu) => {
+    setLoadingDetails(true);
+    setSelectedStudent(stu);
+    setDetailTab('fees');
+    try {
+      const { data } = await studentApi.get(stu.id);
+      setSelectedStudent(data.data);
+      const enr = data.data.enrollments?.[0];
+      const inv = data.data.fee_invoices?.[0];
+      const parsedPlan = parsePlanFromInvoice(inv);
+      setChangePlanForm({
+        course_id: enr?.batches?.course_id || enr?.batches?.courses?.id || '',
+        batch_id: enr?.batch_id || '',
+        payment_plan: parsedPlan?.plan_key || 'cash',
+      });
+    } catch {
+      // keep basic record
+    } finally {
+      setLoadingDetails(false);
+    }
+  };
+
+  // Calculation for Add Student form
+  const addFormCourse = courses.find(c => c.id === form.course_id);
+  const addFormBatches = batches.filter(b => !form.course_id || b.course_id === form.course_id);
+  const addFormFeeDetails = addFormCourse ? calculateFeeDetails(addFormCourse.fee_amount) : null;
+
   const save = async () => {
-    if (!form.first_name || !form.last_name || !form.email) return toast.error('Name and email required');
+    if (!form.first_name || !form.last_name || !form.email) {
+      return toast.error('First Name, Last Name and Email are required');
+    }
     setSaving(true);
     try {
-      const { data } = await studentApi.create(form);
-      toast.success(data.message || 'Student created');
+      let planDetails = null;
+      if (addFormCourse && addFormFeeDetails) {
+        if (form.payment_plan === 'cash') {
+          const c = addFormFeeDetails.cash;
+          planDetails = {
+            plan_key: 'cash',
+            plan_name: 'Cash Settlement (15% Special Discount)',
+            base_fee: c.baseAmount,
+            gst: c.gstAmount,
+            standard_total: c.originalTotal,
+            discount_percent: c.discountPercent,
+            discount_amount: c.discountAmount,
+            net_payable: c.totalAmount,
+            monthly_installment: c.totalAmount,
+            months: 1,
+            payment_type: 'cash',
+          };
+        } else {
+          const p = addFormFeeDetails.emiOptions.find(o => o.key === form.payment_plan);
+          if (p) {
+            planDetails = {
+              plan_key: p.key,
+              plan_name: p.fullName,
+              base_fee: p.baseAmount,
+              gst: p.gstAmount,
+              standard_total: p.originalTotal,
+              discount_percent: p.discountPercent,
+              discount_amount: p.discountAmount,
+              net_payable: p.totalAmount,
+              monthly_installment: p.installmentTotal,
+              months: p.months,
+              payment_type: 'emi',
+            };
+          }
+        }
+      }
+
+      const payload = {
+        first_name: form.first_name,
+        last_name: form.last_name,
+        email: form.email,
+        phone: form.phone,
+        date_of_birth: form.date_of_birth,
+        gender: form.gender,
+        address: form.address,
+        guardian_name: form.guardian_name,
+        guardian_phone: form.guardian_phone,
+        admission_date: form.admission_date,
+        batch_id: form.batch_id || null,
+        payment_plan: form.payment_plan || null,
+        plan_details: planDetails,
+      };
+
+      const { data } = await studentApi.create(payload);
+      toast.success(data.message || 'Student enrolled successfully');
       setShowCreate(false);
-      setForm({ first_name: '', last_name: '', email: '', phone: '', date_of_birth: '', gender: '', address: '', guardian_name: '', guardian_phone: '', admission_date: new Date().toISOString().split('T')[0] });
+      setForm({
+        first_name: '', last_name: '', email: '', phone: '',
+        date_of_birth: '', gender: '', address: '',
+        guardian_name: '', guardian_phone: '',
+        admission_date: new Date().toISOString().split('T')[0],
+        course_id: '', batch_id: '', payment_plan: 'cash',
+      });
       fetch_();
-    } catch (e) { toast.error(e.response?.data?.error || 'Failed'); }
-    finally { setSaving(false); }
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Failed to create student');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Change / Assign Plan Handler in Admin View
+  const handleAssignPlan = async () => {
+    if (!selectedStudent) return;
+    setSavingPlan(true);
+    try {
+      const targetBatch = batches.find(b => b.id === changePlanForm.batch_id);
+      const targetCourse = targetBatch?.courses || courses.find(c => c.id === changePlanForm.course_id || c.id === targetBatch?.course_id);
+
+      let planDetails = null;
+      if (targetCourse?.fee_amount) {
+        const details = calculateFeeDetails(targetCourse.fee_amount);
+        if (changePlanForm.payment_plan === 'cash') {
+          const c = details.cash;
+          planDetails = {
+            plan_key: 'cash',
+            plan_name: 'Cash Settlement (15% Special Discount)',
+            base_fee: c.baseAmount,
+            gst: c.gstAmount,
+            standard_total: c.originalTotal,
+            discount_percent: c.discountPercent,
+            discount_amount: c.discountAmount,
+            net_payable: c.totalAmount,
+            monthly_installment: c.totalAmount,
+            months: 1,
+            payment_type: 'cash',
+          };
+        } else {
+          const p = details.emiOptions.find(o => o.key === changePlanForm.payment_plan);
+          if (p) {
+            planDetails = {
+              plan_key: p.key,
+              plan_name: p.fullName,
+              base_fee: p.baseAmount,
+              gst: p.gstAmount,
+              standard_total: p.originalTotal,
+              discount_percent: p.discountPercent,
+              discount_amount: p.discountAmount,
+              net_payable: p.totalAmount,
+              monthly_installment: p.installmentTotal,
+              months: p.months,
+              payment_type: 'emi',
+            };
+          }
+        }
+      }
+
+      await studentApi.assignPlan(selectedStudent.id, {
+        batch_id: changePlanForm.batch_id || null,
+        payment_plan: changePlanForm.payment_plan,
+        plan_details: planDetails,
+      });
+
+      toast.success('Payment plan and batch updated successfully');
+      setDetailTab('fees');
+      openStudentDetails(selectedStudent);
+      fetch_();
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Failed to update plan');
+    } finally {
+      setSavingPlan(false);
+    }
+  };
+
+  // Record Payment Handler
+  const handleRecordPayment = async () => {
+    if (!selectedInvoiceForPay) return;
+    const amount = Number(payForm.amount);
+    if (!amount || amount <= 0) return toast.error('Please enter a valid payment amount');
+
+    setRecordingPay(true);
+    try {
+      await studentApi.recordPayment(selectedInvoiceForPay.id, {
+        amount,
+        payment_mode: payForm.payment_mode,
+        transaction_reference: payForm.transaction_reference,
+        payment_date: payForm.payment_date,
+      });
+      toast.success('Payment recorded successfully');
+      setShowPayModal(false);
+      setPayForm({
+        amount: '',
+        payment_mode: 'cash',
+        transaction_reference: '',
+        payment_date: new Date().toISOString().split('T')[0],
+      });
+      openStudentDetails(selectedStudent);
+      fetch_();
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Failed to record payment');
+    } finally {
+      setRecordingPay(false);
+    }
   };
 
   const columns = [
-    { header: 'Student', render: (r) => (
-      <div className="flex items-center gap-3">
-        <div className="avatar w-8 h-8 text-xs">{r.first_name?.[0]}{r.last_name?.[0]}</div>
-        <div>
-          <p className="font-medium text-sm">{r.first_name} {r.last_name}</p>
-          <p className="text-xs text-slate-400">{r.student_code} · {r.email}</p>
+    {
+      header: 'Student',
+      render: (r) => (
+        <div className="flex items-center gap-3">
+          <div className="avatar w-9 h-9 text-xs font-bold text-white bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shrink-0">
+            {r.first_name?.[0]}{r.last_name?.[0]}
+          </div>
+          <div>
+            <p className="font-semibold text-sm text-slate-900">{r.first_name} {r.last_name}</p>
+            <p className="text-xs text-slate-500">{r.student_code} • {r.email}</p>
+          </div>
         </div>
-      </div>
-    )},
-    { header: 'Phone', key: 'phone' },
-    { header: 'Admission', render: (r) => r.admission_date || '—' },
-    { header: 'Status', render: (r) => <Badge status={r.status} /> },
+      ),
+    },
+    {
+      header: 'Enrolled Course & Batch',
+      render: (r) => {
+        const enr = r.enrollments?.[0];
+        const batch = enr?.batches;
+        const course = batch?.courses;
+        if (!course) {
+          return <span className="text-xs text-slate-400 italic">Not Enrolled</span>;
+        }
+        return (
+          <div>
+            <p className="text-xs font-bold text-slate-800">{course.name}</p>
+            <p className="text-[11px] text-blue-600 font-medium">
+              {batch?.name || 'Batch'} {course.duration_months ? `(${course.duration_months} mos)` : ''}
+            </p>
+          </div>
+        );
+      },
+    },
+    {
+      header: 'Selected Payment Plan',
+      render: (r) => {
+        const inv = r.fee_invoices?.[0];
+        const plan = parsePlanFromInvoice(inv);
+        if (!plan) {
+          return <span className="text-xs text-slate-400">—</span>;
+        }
+        if (plan.payment_type === 'cash' || plan.plan_key === 'cash') {
+          return (
+            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-900 border border-emerald-300">
+              <span>💵</span> Cash (15% OFF)
+            </span>
+          );
+        }
+        return (
+          <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-blue-50 text-blue-900 border border-blue-300">
+            <span>💳</span> {plan.months || 6} EMI {plan.discount_percent > 0 ? `(${plan.discount_percent}% OFF)` : ''}
+            <span className="text-slate-500 font-normal">· ₹{Number(plan.monthly_installment || 0).toLocaleString()}/mo</span>
+          </span>
+        );
+      },
+    },
+    {
+      header: 'Fee & Status',
+      render: (r) => {
+        const inv = r.fee_invoices?.[0];
+        if (!inv) return <span className="text-xs text-slate-400">—</span>;
+        return (
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-black text-slate-900">
+              ₹{Number(inv.total_amount).toLocaleString()}
+            </span>
+            <Badge status={inv.status} />
+          </div>
+        );
+      },
+    },
+    { header: 'Admission', render: (r) => <span className="text-xs text-slate-600">{r.admission_date || '—'}</span> },
+    {
+      header: 'Actions',
+      render: (r) => (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); openStudentDetails(r); }}
+          className="text-xs font-bold text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200 transition-all cursor-pointer"
+        >
+          View Details ➔
+        </button>
+      ),
+    },
   ];
 
   return (
     <>
-      <div className="flex flex-wrap gap-3 mb-4">
+      <div className="flex flex-wrap gap-3 mb-4 items-center">
         <div className="search-box flex-1 min-w-[200px]">
           <svg className="search-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
-          <input placeholder="Search students..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input placeholder="Search students by name, code, email..." value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary btn">+ Add Student</button>
+        <button onClick={() => setShowCreate(true)} className="btn-primary btn">
+          + Add Student & Assign Plan
+        </button>
       </div>
-      <DataTable columns={columns} rows={students} loading={loading} emptyIcon="🎓" emptyText="No students found" />
+
+      <DataTable
+        columns={columns}
+        rows={students}
+        loading={loading}
+        onRowClick={(r) => openStudentDetails(r)}
+        emptyIcon="🎓"
+        emptyText="No students found"
+      />
+
+      {/* ─── ADD STUDENT MODAL WITH COURSE & PAYMENT PLAN SELECTOR ─── */}
       {showCreate && (
-        <FormModal title="Add Student" onClose={() => setShowCreate(false)} onSave={save} saving={saving}>
-          <div className="grid grid-cols-2 gap-3">
-            <div><label className="form-label">First Name *</label><input className="form-control" value={form.first_name} onChange={e => setForm(p => ({ ...p, first_name: e.target.value }))} /></div>
-            <div><label className="form-label">Last Name *</label><input className="form-control" value={form.last_name} onChange={e => setForm(p => ({ ...p, last_name: e.target.value }))} /></div>
-            <div className="col-span-2"><label className="form-label">Email *</label><input type="email" className="form-control" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} /></div>
-            <div><label className="form-label">Phone</label><input className="form-control" value={form.phone} onChange={e => setForm(p => ({ ...p, phone: e.target.value }))} /></div>
-            <div><label className="form-label">DOB</label><input type="date" className="form-control" value={form.date_of_birth} onChange={e => setForm(p => ({ ...p, date_of_birth: e.target.value }))} /></div>
-            <div><label className="form-label">Gender</label>
-              <select className="select-control" value={form.gender} onChange={e => setForm(p => ({ ...p, gender: e.target.value }))}>
-                <option value="">Select</option><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option>
-              </select>
+        <FormModal
+          title="Add New Student & Set Payment Plan"
+          onClose={() => setShowCreate(false)}
+          onSave={save}
+          saving={saving}
+          maxWidth="max-w-2xl"
+        >
+          {/* Section 1: Bio */}
+          <div>
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
+              1. Student Personal & Contact Details
+            </h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="form-label font-semibold text-slate-700">First Name *</label>
+                <input
+                  className="form-control"
+                  placeholder="e.g. Rahul"
+                  value={form.first_name}
+                  onChange={e => setForm(p => ({ ...p, first_name: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="form-label font-semibold text-slate-700">Last Name *</label>
+                <input
+                  className="form-control"
+                  placeholder="e.g. Sharma"
+                  value={form.last_name}
+                  onChange={e => setForm(p => ({ ...p, last_name: e.target.value }))}
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="form-label font-semibold text-slate-700">Email * (Login username for Student Portal)</label>
+                <input
+                  type="email"
+                  className="form-control"
+                  placeholder="e.g. rahul@example.com"
+                  value={form.email}
+                  onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="form-label font-semibold text-slate-700">Phone</label>
+                <input
+                  className="form-control"
+                  placeholder="e.g. 9876543210"
+                  value={form.phone}
+                  onChange={e => setForm(p => ({ ...p, phone: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="form-label font-semibold text-slate-700">Admission Date</label>
+                <input
+                  type="date"
+                  className="form-control"
+                  value={form.admission_date}
+                  onChange={e => setForm(p => ({ ...p, admission_date: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="form-label font-semibold text-slate-700">Guardian Name</label>
+                <input
+                  className="form-control"
+                  placeholder="Parent / Guardian"
+                  value={form.guardian_name}
+                  onChange={e => setForm(p => ({ ...p, guardian_name: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="form-label font-semibold text-slate-700">Guardian Phone</label>
+                <input
+                  className="form-control"
+                  placeholder="Guardian contact"
+                  value={form.guardian_phone}
+                  onChange={e => setForm(p => ({ ...p, guardian_phone: e.target.value }))}
+                />
+              </div>
             </div>
-            <div><label className="form-label">Admission Date</label><input type="date" className="form-control" value={form.admission_date} onChange={e => setForm(p => ({ ...p, admission_date: e.target.value }))} /></div>
-            <div className="col-span-2"><label className="form-label">Address</label><textarea className="form-control" rows={2} value={form.address} onChange={e => setForm(p => ({ ...p, address: e.target.value }))} /></div>
-            <div><label className="form-label">Guardian Name</label><input className="form-control" value={form.guardian_name} onChange={e => setForm(p => ({ ...p, guardian_name: e.target.value }))} /></div>
-            <div><label className="form-label">Guardian Phone</label><input className="form-control" value={form.guardian_phone} onChange={e => setForm(p => ({ ...p, guardian_phone: e.target.value }))} /></div>
+          </div>
+
+          {/* Section 2: Course & Batch Selection */}
+          <div className="pt-3 border-t border-slate-200">
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
+              2. Course Enrollment
+            </h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="form-label font-semibold text-slate-700">Select Course</label>
+                <select
+                  className="select-control"
+                  value={form.course_id}
+                  onChange={e => setForm(p => ({ ...p, course_id: e.target.value, batch_id: '' }))}
+                >
+                  <option value="">-- Choose Course --</option>
+                  {courses.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.code}) - Base: ₹{Number(c.fee_amount || 0).toLocaleString()}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="form-label font-semibold text-slate-700">Assign Batch</label>
+                <select
+                  className="select-control"
+                  value={form.batch_id}
+                  onChange={e => setForm(p => ({ ...p, batch_id: e.target.value }))}
+                  disabled={!form.course_id}
+                >
+                  <option value="">-- Choose Batch --</option>
+                  {addFormBatches.map(b => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} {b.start_date ? `(Starts: ${b.start_date})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 3: Payment Plan Selection (Cash or EMI with Discounts) */}
+          {addFormCourse && addFormFeeDetails && (
+            <div className="pt-3 border-t border-slate-200 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold text-slate-600 uppercase tracking-wider">
+                  3. Select Student's Agreed Payment Plan:
+                </h3>
+                <span className="text-xs text-blue-700 font-bold bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                  Standard Total: ₹{addFormFeeDetails.total.toLocaleString()} (inc. 18% GST)
+                </span>
+              </div>
+
+              {/* Plans Radio Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {/* 1. Cash Option */}
+                <label
+                  onClick={() => setForm(p => ({ ...p, payment_plan: 'cash' }))}
+                  className={`p-3 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                    form.payment_plan === 'cash'
+                      ? 'border-emerald-500 bg-emerald-50/70 ring-2 ring-emerald-500/20'
+                      : 'border-slate-200 bg-white hover:border-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                      <input
+                        type="radio"
+                        name="payment_plan"
+                        checked={form.payment_plan === 'cash'}
+                        onChange={() => {}}
+                        className="text-emerald-600"
+                      />
+                      <span>💵 Cash Payment</span>
+                    </span>
+                    <span className="text-[10px] font-black uppercase px-1.5 py-0.2 rounded bg-emerald-200 text-emerald-950 border border-emerald-300">
+                      15% OFF
+                    </span>
+                  </div>
+                  <div className="mt-2 text-right">
+                    <div className="text-xs text-slate-400 line-through">₹{addFormFeeDetails.total.toLocaleString()}</div>
+                    <div className="text-lg font-black text-emerald-950">
+                      ₹{addFormFeeDetails.cash.totalAmount.toLocaleString()}
+                    </div>
+                    <div className="text-[10px] text-emerald-700 font-bold">
+                      Save ₹{addFormFeeDetails.cash.discountAmount.toLocaleString()} instant
+                    </div>
+                  </div>
+                </label>
+
+                {/* 2. EMI Options */}
+                {addFormFeeDetails.emiOptions.map(plan => (
+                  <label
+                    key={plan.key}
+                    onClick={() => setForm(p => ({ ...p, payment_plan: plan.key }))}
+                    className={`p-3 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                      form.payment_plan === plan.key
+                        ? 'border-blue-500 bg-blue-50/70 ring-2 ring-blue-500/20'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                        <input
+                          type="radio"
+                          name="payment_plan"
+                          checked={form.payment_plan === plan.key}
+                          onChange={() => {}}
+                          className="text-blue-600"
+                        />
+                        <span>💳 {plan.label}</span>
+                      </span>
+                      {plan.discountPercent > 0 ? (
+                        <span className="text-[10px] font-black uppercase px-1.5 py-0.2 rounded bg-blue-200 text-blue-950 border border-blue-300">
+                          {plan.discountPercent}% OFF
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-semibold uppercase px-1.5 py-0.2 rounded bg-slate-100 text-slate-500">
+                          Total EMI
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-2 text-right">
+                      <div className="text-lg font-black text-slate-900">
+                        ₹{plan.installmentTotal.toLocaleString()}
+                        <span className="text-xs font-normal text-slate-500"> / mo</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        Total: <strong>₹{plan.totalAmount.toLocaleString()}</strong> ({plan.months} mos)
+                      </div>
+                      {plan.discountPercent > 0 && (
+                        <div className="text-[10px] text-emerald-700 font-bold">
+                          Save ₹{plan.discountAmount.toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </FormModal>
+      )}
+
+      {/* ─── ADMIN DETAILED VIEW MODAL ("WHEN ADMIN WANT TO VIEW") ─── */}
+      {selectedStudent && (
+        <div className="modal-overlay" onClick={() => setSelectedStudent(null)}>
+          <div
+            className="modal max-w-4xl max-h-[92vh] flex flex-col my-auto transition-all"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="modal-header sticky top-0 bg-white z-20 px-6 py-4 border-b border-slate-200 shrink-0 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="avatar w-11 h-11 text-sm font-bold text-white bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl flex items-center justify-center shrink-0 shadow-xs">
+                  {selectedStudent.first_name?.[0]}{selectedStudent.last_name?.[0]}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg sm:text-xl font-bold text-slate-900">
+                      {selectedStudent.first_name} {selectedStudent.last_name}
+                    </h2>
+                    <span className="text-xs font-mono font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200">
+                      {selectedStudent.student_code}
+                    </span>
+                    <Badge status={selectedStudent.status} />
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Admission Date: {selectedStudent.admission_date || 'N/A'} • Email: {selectedStudent.email}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedStudent(null)}
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 text-2xl font-bold cursor-pointer transition-all"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Sub-tabs */}
+            <div className="flex border-b border-slate-200 px-6 bg-slate-50 shrink-0">
+              <button
+                onClick={() => setDetailTab('fees')}
+                className={`py-3 px-4 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+                  detailTab === 'fees'
+                    ? 'border-blue-600 text-blue-700 bg-white'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                💳 Payment Structure & Fees
+              </button>
+              <button
+                onClick={() => setDetailTab('profile')}
+                className={`py-3 px-4 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+                  detailTab === 'profile'
+                    ? 'border-blue-600 text-blue-700 bg-white'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                👤 Admission Bio & Contact
+              </button>
+              <button
+                onClick={() => setDetailTab('change_plan')}
+                className={`py-3 px-4 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+                  detailTab === 'change_plan'
+                    ? 'border-blue-600 text-blue-700 bg-white'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                ⚙️ Update / Assign Plan
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="modal-body overflow-y-auto flex-1 p-6 space-y-6">
+              {loadingDetails ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="spinner w-8 h-8" />
+                </div>
+              ) : detailTab === 'fees' ? (() => {
+                const enr = selectedStudent.enrollments?.[0] || null;
+                const batch = enr?.batches || null;
+                const course = batch?.courses || null;
+                const invoices = selectedStudent.fee_invoices || [];
+                const invoice = invoices[0] || null;
+                const plan = parsePlanFromInvoice(invoice);
+
+                const allPayments = invoices.flatMap(inv => inv.fee_payments || []);
+                const totalPaid = allPayments.reduce((s, p) => s + Number(p.amount || 0), 0);
+                const totalPayable = invoice ? Number(invoice.total_amount) : (plan?.net_payable || 0);
+                const balanceDue = Math.max(0, totalPayable - totalPaid);
+
+                return (
+                  <div className="space-y-5">
+                    {/* Course Banner */}
+                    <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <span className="text-xs text-blue-600 font-semibold uppercase tracking-wider">Active Enrollment</span>
+                        <h3 className="text-base font-bold text-slate-900 mt-0.5">
+                          {course ? `${course.name} (${course.code || 'N/A'})` : 'No Course Enrolled'}
+                        </h3>
+                        {batch && (
+                          <p className="text-xs text-slate-600 mt-0.5">
+                            Batch: <strong className="text-slate-800">{batch.name}</strong> • Duration: {course?.duration_months || 6} Months
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDetailTab('change_plan')}
+                        className="btn-ghost btn text-xs py-1 px-3 border border-blue-200 bg-white text-blue-700 hover:bg-blue-50"
+                      >
+                        Change Course / Plan ➔
+                      </button>
+                    </div>
+
+                    {/* Chosen Payment Structure Card */}
+                    {plan ? (
+                      <div className={`p-4 rounded-xl border ${
+                        plan.payment_type === 'cash' || plan.plan_key === 'cash'
+                          ? 'border-emerald-300 bg-emerald-50/30'
+                          : 'border-blue-300 bg-blue-50/30'
+                      } space-y-4`}>
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <span className="text-xs font-bold text-slate-500 uppercase">Selected Payment Structure</span>
+                            <h4 className="text-lg font-black text-slate-900 mt-0.5">
+                              {plan.plan_name || (plan.plan_key === 'cash' ? 'Cash Settlement' : `${plan.months} Months EMI`)}
+                            </h4>
+                          </div>
+
+                          <span className={`text-xs font-black uppercase px-2.5 py-1 rounded-full border ${
+                            plan.discount_percent > 0
+                              ? 'bg-emerald-200 text-emerald-950 border-emerald-300'
+                              : 'bg-slate-200 text-slate-700 border-slate-300'
+                          }`}>
+                            {plan.discount_percent > 0 ? `${plan.discount_percent}% Special Discount` : 'Standard Total (No Discount)'}
+                          </span>
+                        </div>
+
+                        {/* Financial Figures */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                          <div>
+                            <span className="text-[11px] text-slate-400 font-semibold uppercase">Base Course Fee</span>
+                            <p className="text-base font-bold text-slate-800 mt-0.5">
+                              ₹{Number(plan.base_fee || 0).toLocaleString()}
+                            </p>
+                          </div>
+                          <div>
+                            <span className="text-[11px] text-slate-400 font-semibold uppercase">+ 18% GST</span>
+                            <p className="text-base font-bold text-amber-700 mt-0.5">
+                              ₹{Number(plan.gst || 0).toLocaleString()}
+                            </p>
+                          </div>
+                          <div>
+                            <span className="text-[11px] text-slate-400 font-semibold uppercase">Instant Savings</span>
+                            <p className="text-base font-bold text-emerald-700 mt-0.5">
+                              {plan.discount_amount > 0 ? `Save ₹${Number(plan.discount_amount).toLocaleString()}` : '₹0'}
+                            </p>
+                          </div>
+                          <div className="bg-blue-50/50 -m-1.5 p-2 rounded-lg border border-blue-200">
+                            <span className="text-[11px] text-blue-700 font-bold uppercase">Net Payable</span>
+                            <p className="text-lg font-black text-blue-900 mt-0.5">
+                              ₹{Number(plan.net_payable || totalPayable).toLocaleString()}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Installment Info if EMI */}
+                        {plan.payment_type !== 'cash' && plan.plan_key !== 'cash' && plan.monthly_installment > 0 && (
+                          <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-white rounded-xl border border-blue-200 text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg">💳</span>
+                              <div>
+                                <span className="text-slate-500 font-semibold">Monthly Installment Amount:</span>
+                                <div className="text-base font-black text-slate-900">
+                                  ₹{Number(plan.monthly_installment).toLocaleString()}
+                                  <span className="text-xs font-normal text-slate-500"> / month</span>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-slate-500 font-semibold">Installment Tenure:</span>
+                              <div className="text-sm font-bold text-blue-800">{plan.months} Monthly Payments</div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="p-4 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-800">
+                        ⚠️ No specific discount plan has been saved for this student yet. Click "Update / Assign Plan" above to assign Cash (15% OFF) or an EMI plan (7% OFF).
+                      </div>
+                    )}
+
+                    {/* Payment Status Bar */}
+                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-bold">
+                        <span className="text-slate-700">Fee Payment Progress</span>
+                        <span className="text-blue-700">
+                          {totalPayable > 0 ? Math.min(100, Math.round((totalPaid / totalPayable) * 100)) : 0}% Paid
+                        </span>
+                      </div>
+                      <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                        <div
+                          className="bg-emerald-500 h-full rounded-full transition-all duration-500"
+                          style={{ width: `${totalPayable > 0 ? Math.min(100, (totalPaid / totalPayable) * 100) : 0}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-xs text-slate-600 pt-1 font-semibold">
+                        <span>Total Paid: <strong className="text-emerald-700">₹{totalPaid.toLocaleString()}</strong></span>
+                        <span>Balance Due: <strong className="text-amber-700">₹{balanceDue.toLocaleString()}</strong></span>
+                      </div>
+                    </div>
+
+                    {/* Invoices & Recorded Transactions */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider">
+                          Fee Invoices & Payment Ledger
+                        </h4>
+                        {invoice && invoice.status !== 'paid' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedInvoiceForPay(invoice);
+                              setPayForm(p => ({
+                                ...p,
+                                amount: plan?.monthly_installment ? Math.min(balanceDue, Number(plan.monthly_installment)) : balanceDue,
+                              }));
+                              setShowPayModal(true);
+                            }}
+                            className="btn-primary btn text-xs py-1 px-3"
+                          >
+                            + Record Fee Payment
+                          </button>
+                        )}
+                      </div>
+
+                      {invoices.length > 0 ? (
+                        <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100 bg-white">
+                          {invoices.map(inv => (
+                            <div key={inv.id} className="p-4 space-y-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                  <span className="font-mono text-xs font-bold text-slate-900">{inv.invoice_number}</span>
+                                  <span className="text-xs text-slate-400 ml-2">Due: {inv.due_date || 'On enrollment'}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-black text-slate-900">₹{Number(inv.total_amount).toLocaleString()}</span>
+                                  <Badge status={inv.status} />
+                                </div>
+                              </div>
+
+                              {/* Recorded payments sub-table */}
+                              {inv.fee_payments && inv.fee_payments.length > 0 ? (
+                                <div className="bg-slate-50 rounded-lg p-2.5 text-xs space-y-1.5 border border-slate-200">
+                                  <div className="font-bold text-slate-600 uppercase text-[10px]">Payment Receipts:</div>
+                                  {inv.fee_payments.map(p => (
+                                    <div key={p.id} className="flex justify-between items-center text-slate-700">
+                                      <span>
+                                        ₹{Number(p.amount).toLocaleString()} via <strong className="uppercase">{p.payment_mode}</strong> on {p.payment_date}
+                                        {p.transaction_reference ? ` (Ref: ${p.transaction_reference})` : ''}
+                                      </span>
+                                      <span className="text-emerald-700 font-bold">✓ Recorded</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-slate-400 italic">No payments recorded yet for this invoice.</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-400 text-center py-4 bg-slate-50 rounded-xl">No invoices found.</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })() : detailTab === 'profile' ? (
+                /* Profile Tab */
+                <div className="space-y-4">
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 grid grid-cols-2 gap-4 text-xs">
+                    <div>
+                      <span className="text-slate-400 font-semibold uppercase">Full Name</span>
+                      <p className="font-bold text-slate-900 text-sm mt-0.5">{selectedStudent.first_name} {selectedStudent.last_name}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-semibold uppercase">Student Code</span>
+                      <p className="font-bold text-slate-900 text-sm mt-0.5">{selectedStudent.student_code}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-semibold uppercase">Email (Portal Login)</span>
+                      <p className="font-bold text-slate-900 mt-0.5">{selectedStudent.email}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-semibold uppercase">Phone Number</span>
+                      <p className="font-bold text-slate-900 mt-0.5">{selectedStudent.phone || '—'}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-semibold uppercase">Date of Birth</span>
+                      <p className="font-bold text-slate-900 mt-0.5">{selectedStudent.date_of_birth || '—'}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-semibold uppercase">Gender</span>
+                      <p className="font-bold text-slate-900 mt-0.5 capitalize">{selectedStudent.gender || '—'}</p>
+                    </div>
+                    <div className="col-span-2">
+                      <span className="text-slate-400 font-semibold uppercase">Residential Address</span>
+                      <p className="font-medium text-slate-800 mt-0.5">{selectedStudent.address || '—'}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-semibold uppercase">Guardian Name</span>
+                      <p className="font-bold text-slate-900 mt-0.5">{selectedStudent.guardian_name || '—'}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-semibold uppercase">Guardian Phone</span>
+                      <p className="font-bold text-slate-900 mt-0.5">{selectedStudent.guardian_phone || '—'}</p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* Change / Assign Plan Tab */
+                <div className="space-y-4">
+                  <div className="bg-blue-50 p-3 rounded-xl border border-blue-200 text-xs text-blue-800">
+                    💡 Select the course, batch, and discounted payment structure chosen by the student. Saving will automatically update their student portal and fee invoice.
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="form-label font-semibold text-slate-700">Course</label>
+                      <select
+                        className="select-control"
+                        value={changePlanForm.course_id}
+                        onChange={e => setChangePlanForm(p => ({ ...p, course_id: e.target.value, batch_id: '' }))}
+                      >
+                        <option value="">-- Choose Course --</option>
+                        {courses.map(c => (
+                          <option key={c.id} value={c.id}>
+                            {c.name} ({c.code}) - Base: ₹{Number(c.fee_amount || 0).toLocaleString()}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="form-label font-semibold text-slate-700">Batch</label>
+                      <select
+                        className="select-control"
+                        value={changePlanForm.batch_id}
+                        onChange={e => setChangePlanForm(p => ({ ...p, batch_id: e.target.value }))}
+                      >
+                        <option value="">-- Choose Batch --</option>
+                        {batches.filter(b => !changePlanForm.course_id || b.course_id === changePlanForm.course_id).map(b => (
+                          <option key={b.id} value={b.id}>
+                            {b.name} {b.start_date ? `(Starts: ${b.start_date})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {(() => {
+                    const targetCourse = courses.find(c => c.id === changePlanForm.course_id);
+                    if (!targetCourse) return null;
+                    const feeDetails = calculateFeeDetails(targetCourse.fee_amount);
+
+                    return (
+                      <div className="space-y-3 pt-2">
+                        <label className="form-label font-bold text-slate-800">Select Payment Plan:</label>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          {/* Cash */}
+                          <label
+                            onClick={() => setChangePlanForm(p => ({ ...p, payment_plan: 'cash' }))}
+                            className={`p-3 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                              changePlanForm.payment_plan === 'cash'
+                                ? 'border-emerald-500 bg-emerald-50/70 ring-2 ring-emerald-500/20'
+                                : 'border-slate-200 bg-white hover:border-slate-300'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                                <input
+                                  type="radio"
+                                  name="change_plan"
+                                  checked={changePlanForm.payment_plan === 'cash'}
+                                  onChange={() => {}}
+                                />
+                                <span>💵 Cash Payment</span>
+                              </span>
+                              <span className="text-[10px] font-black uppercase px-1.5 py-0.2 rounded bg-emerald-200 text-emerald-950 border border-emerald-300">
+                                15% OFF
+                              </span>
+                            </div>
+                            <div className="mt-2 text-right">
+                              <div className="text-xs text-slate-400 line-through">₹{feeDetails.total.toLocaleString()}</div>
+                              <div className="text-base font-black text-emerald-950">
+                                ₹{feeDetails.cash.totalAmount.toLocaleString()}
+                              </div>
+                              <div className="text-[10px] text-emerald-700 font-bold">
+                                Save ₹{feeDetails.cash.discountAmount.toLocaleString()} instant
+                              </div>
+                            </div>
+                          </label>
+
+                          {/* EMI Plans */}
+                          {feeDetails.emiOptions.map(plan => (
+                            <label
+                              key={plan.key}
+                              onClick={() => setChangePlanForm(p => ({ ...p, payment_plan: plan.key }))}
+                              className={`p-3 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                                changePlanForm.payment_plan === plan.key
+                                  ? 'border-blue-500 bg-blue-50/70 ring-2 ring-blue-500/20'
+                                  : 'border-slate-200 bg-white hover:border-slate-300'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                                  <input
+                                    type="radio"
+                                    name="change_plan"
+                                    checked={changePlanForm.payment_plan === plan.key}
+                                    onChange={() => {}}
+                                  />
+                                  <span>💳 {plan.label}</span>
+                                </span>
+                                {plan.discountPercent > 0 ? (
+                                  <span className="text-[10px] font-black uppercase px-1.5 py-0.2 rounded bg-blue-200 text-blue-950 border border-blue-300">
+                                    {plan.discountPercent}% OFF
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] font-semibold uppercase px-1.5 py-0.2 rounded bg-slate-100 text-slate-500">
+                                    Total EMI
+                                  </span>
+                                )}
+                              </div>
+                              <div className="mt-2 text-right">
+                                <div className="text-base font-black text-slate-900">
+                                  ₹{plan.installmentTotal.toLocaleString()}
+                                  <span className="text-xs font-normal text-slate-500"> / mo</span>
+                                </div>
+                                <div className="text-[10px] text-slate-500">
+                                  Total: <strong>₹{plan.totalAmount.toLocaleString()}</strong> ({plan.months} mos)
+                                </div>
+                                {plan.discountPercent > 0 && (
+                                  <div className="text-[10px] text-emerald-700 font-bold">
+                                    Save ₹{plan.discountAmount.toLocaleString()}
+                                  </div>
+                                )}
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+
+                        <div className="pt-3 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={handleAssignPlan}
+                            disabled={savingPlan}
+                            className="btn-primary btn"
+                          >
+                            {savingPlan ? 'Updating Plan...' : '✓ Update Student Payment Plan'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── RECORD PAYMENT QUICK MODAL ─── */}
+      {showPayModal && selectedInvoiceForPay && (
+        <FormModal
+          title={`Record Fee Payment (${selectedInvoiceForPay.invoice_number})`}
+          onClose={() => setShowPayModal(false)}
+          onSave={handleRecordPayment}
+          saving={recordingPay}
+        >
+          <div className="space-y-3">
+            <div>
+              <label className="form-label font-semibold text-slate-700">Payment Amount (₹) *</label>
+              <input
+                type="number"
+                className="form-control"
+                placeholder="e.g. 9145"
+                value={payForm.amount}
+                onChange={e => setPayForm(p => ({ ...p, amount: e.target.value }))}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="form-label font-semibold text-slate-700">Payment Mode</label>
+                <select
+                  className="select-control"
+                  value={payForm.payment_mode}
+                  onChange={e => setPayForm(p => ({ ...p, payment_mode: e.target.value }))}
+                >
+                  <option value="cash">Cash</option>
+                  <option value="upi">UPI / GPay / PhonePe</option>
+                  <option value="bank_transfer">Bank Transfer / NEFT</option>
+                  <option value="card">Debit / Credit Card</option>
+                  <option value="cheque">Cheque</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="form-label font-semibold text-slate-700">Payment Date</label>
+                <input
+                  type="date"
+                  className="form-control"
+                  value={payForm.payment_date}
+                  onChange={e => setPayForm(p => ({ ...p, payment_date: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="form-label font-semibold text-slate-700">Transaction Reference / Receipt No.</label>
+              <input
+                className="form-control"
+                placeholder="e.g. UPI-928374928 or Receipt #102"
+                value={payForm.transaction_reference}
+                onChange={e => setPayForm(p => ({ ...p, transaction_reference: e.target.value }))}
+              />
+            </div>
           </div>
         </FormModal>
       )}
@@ -160,104 +1219,6 @@ function StudentsModule() {
 }
 
 // ─── COURSES & BATCHES PAGE ──────────────────────────────────
-const GST_PERCENT = 18;
-const EMI_MONTHS_LIST = [4, 6, 8, 15];
-
-function calculateFeeDetails(baseAmount, allowedPlans) {
-  const originalBase = Math.max(0, Number(baseAmount) || 0);
-  const originalGst = Math.round(originalBase * (GST_PERCENT / 100));
-  const originalTotal = originalBase + originalGst;
-
-  // 1. Cash Option: 15% Discount
-  const cashDiscountPercent = 15;
-  const cashDiscountAmount = Math.round(originalTotal * (cashDiscountPercent / 100));
-  const cashTotal = originalTotal - cashDiscountAmount;
-  const cashBase = Math.round(originalBase * (1 - cashDiscountPercent / 100));
-  const cashGst = cashTotal - cashBase;
-
-  const cash = {
-    key: 'cash',
-    label: 'Cash',
-    fullName: 'Full Cash Payment',
-    months: 1,
-    discountPercent: cashDiscountPercent,
-    discountAmount: cashDiscountAmount,
-    originalTotal,
-    baseAmount: cashBase,
-    gstAmount: cashGst,
-    totalAmount: cashTotal,
-    installmentAmount: cashTotal,
-    badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-300',
-  };
-
-  // 2. EMI Options:
-  // - 4, 6, 8 EMI: 7% Discount
-  // - 15 EMI (Total EMI): 0% Discount (No Discount)
-  const allEmiPlans = EMI_MONTHS_LIST.map(months => {
-    const isDiscounted = [4, 6, 8].includes(months);
-    const discountPercent = isDiscounted ? 7 : 0;
-    const discountAmount = Math.round(originalTotal * (discountPercent / 100));
-    const totalWithDiscount = originalTotal - discountAmount;
-    const baseWithDiscount = Math.round(originalBase * (1 - discountPercent / 100));
-    const gstWithDiscount = totalWithDiscount - baseWithDiscount;
-
-    const installmentTotal = Math.round(totalWithDiscount / months);
-    const installmentBase = Math.round(baseWithDiscount / months);
-    const installmentGst = installmentTotal - installmentBase;
-    const originalInstallment = Math.round(originalTotal / months);
-
-    return {
-      key: `emi_${months}`,
-      months,
-      label: `${months} EMI`,
-      fullName: `${months} Months EMI Plan`,
-      discountPercent,
-      discountAmount,
-      originalTotal,
-      originalInstallment,
-      baseAmount: baseWithDiscount,
-      gstAmount: gstWithDiscount,
-      totalAmount: totalWithDiscount,
-      installmentTotal,
-      installmentBase,
-      installmentGst,
-      badgeClass:
-        months === 4 ? 'bg-blue-50 text-blue-800 border-blue-300' :
-        months === 6 ? 'bg-indigo-50 text-indigo-800 border-indigo-300' :
-        months === 8 ? 'bg-purple-50 text-purple-800 border-purple-300' :
-        'bg-amber-50 text-amber-800 border-amber-300',
-    };
-  });
-
-  const emiOptions = allowedPlans && allowedPlans.length > 0
-    ? allEmiPlans.filter(p => allowedPlans.includes(p.key) || allowedPlans.includes(String(p.months)))
-    : allEmiPlans;
-
-  return {
-    base: originalBase,
-    gst: originalGst,
-    total: originalTotal,
-    cash,
-    allEmiPlans,
-    emiOptions: emiOptions.length > 0 ? emiOptions : allEmiPlans,
-  };
-}
-
-function parseCoursePlans(description) {
-  if (!description) return ['emi_4', 'emi_6', 'emi_8', 'emi_15'];
-  const match = description.match(/\[emi_plans:([^\]]+)\]/);
-  if (match && match[1]) {
-    const list = match[1].split(',').filter(Boolean);
-    if (list.length > 0) return list;
-  }
-  return ['emi_4', 'emi_6', 'emi_8', 'emi_15'];
-}
-
-function stripPlansFromDesc(description) {
-  if (!description) return '';
-  return description.replace(/\[(plans|emi_plans):[^\]]+\]/g, '').trim();
-}
-
 function PaymentOptionsCell({ fee, description, onSelect, isSelected }) {
   const base = Number(fee) || 0;
   if (!base) return <span className="text-slate-400 text-xs">—</span>;
@@ -308,6 +1269,8 @@ function PaymentOptionsCell({ fee, description, onSelect, isSelected }) {
     </div>
   );
 }
+
+
 
 function CoursesModule() {
   const [courses, setCourses] = useState([]);

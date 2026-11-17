@@ -38,6 +38,7 @@ const allNavItems = [
     items: [
       { to: '/students', icon: '🎓', label: 'Students', roles: ['super_admin','hr','faculty'] },
       { to: '/students/courses', icon: '📚', label: 'Courses & Batches', roles: ['super_admin','hr','faculty'] },
+      { to: '/student/portal', icon: '🎓', label: 'My Learning & Fees', roles: ['student'] },
     ],
   },
   {

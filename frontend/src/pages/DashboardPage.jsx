@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { reportApi } from '../api';
 import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
          XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
@@ -26,7 +26,10 @@ function StatCard({ icon, label, value, color, to, subtitle }) {
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const [summary, setSummary] = useState(null);
+
+  if (user?.role === 'student') {
+    return <Navigate to="/student/portal" replace />;
+  }
   const [attChart, setAttChart] = useState([]);
   const [payrollChart, setPayrollChart] = useState([]);
   const [leaveChart, setLeaveChart] = useState([]);

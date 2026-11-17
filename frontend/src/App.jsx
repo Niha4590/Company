@@ -14,6 +14,7 @@ import MyPayslipsPage from './pages/MyPayslipsPage';
 import ExitsPage from './pages/ExitsPage';
 import ModulePage from './pages/ModulePage';
 import DepartmentsPage from './pages/DepartmentsPage';
+import StudentPortalPage from './pages/StudentPortalPage';
 
 export default function App() {
   return (
@@ -42,6 +43,7 @@ export default function App() {
             <Route path="/expenses" element={<ModulePage title="Expenses" kind="expenses" />} />
             <Route path="/students" element={<ModulePage title="Students" kind="students" />} />
             <Route path="/students/courses" element={<ModulePage title="Courses & Batches" kind="courses" />} />
+            <Route path="/student/portal" element={<StudentPortalPage />} />
             <Route path="/projects" element={<ModulePage title="Projects & Tasks" kind="projects" />} />
             <Route path="/announcements" element={<ModulePage title="Announcements" kind="announcements" />} />
             <Route path="/assets" element={<ModulePage title="Assets" kind="assets" />} />

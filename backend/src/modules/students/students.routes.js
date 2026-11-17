@@ -18,11 +18,15 @@ const generateStudentCode = async () => {
 // ── GET /api/students
 router.get('/', authorize(...STU_ROLES), async (req, res) => {
   try {
-    const { page = 1, limit = 20, search, status = 'active' } = req.query;
+    const { page = 1, limit = 50, search, status = 'active' } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
 
     let query = supabaseAdmin.from('students')
-      .select('id, student_code, first_name, last_name, email, phone, admission_date, status', { count: 'exact' });
+      .select(`
+        id, student_code, first_name, last_name, email, phone, admission_date, status, date_of_birth, gender, address, guardian_name, guardian_phone,
+        enrollments(id, status, batch_id, enrolled_on, batches(id, name, start_date, end_date, faculty_id, courses(id, name, code, duration_months, fee_amount, description))),
+        fee_invoices(id, invoice_number, total_amount, due_date, status, description, created_at, fee_payments(id, amount, payment_mode, payment_date, transaction_reference))
+      `, { count: 'exact' });
     if (status) query = query.eq('status', status);
     if (search) query = query.or(`first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%,student_code.ilike.%${search}%`);
     query = query.order('created_at', { ascending: false }).range(offset, offset + Number(limit) - 1);
@@ -31,6 +35,7 @@ router.get('/', authorize(...STU_ROLES), async (req, res) => {
     if (error) throw error;
     return res.json({ data, meta: { total: count, page: Number(page), limit: Number(limit) } });
   } catch (err) {
+    logger.error('Fetch students error:', err);
     return res.status(500).json({ error: 'Failed to fetch students' });
   }
 });
@@ -40,16 +45,23 @@ router.get('/:id', async (req, res) => {
   try {
     // Students can only see themselves
     let id = req.params.id;
-    if (req.user.roleName === 'student') {
+    if (id === 'me' || req.user.roleName === 'student') {
       const { data: s } = await supabaseAdmin.from('students').select('id').eq('user_id', req.user.id).single();
       id = s?.id;
     }
+    if (!id) return res.status(404).json({ error: 'Student record not found' });
+
     const { data, error } = await supabaseAdmin.from('students')
-      .select(`*, enrollments(*, batches(*, courses(*)))`)
+      .select(`
+        *,
+        enrollments(id, status, batch_id, enrolled_on, batches(id, name, start_date, end_date, faculty_id, courses(id, name, code, duration_months, fee_amount, description), employees!batches_faculty_id_fkey(first_name, last_name))),
+        fee_invoices(*, fee_payments(*))
+      `)
       .eq('id', id).single();
     if (error) return res.status(404).json({ error: 'Student not found' });
     return res.json({ data });
   } catch (err) {
+    logger.error('Fetch student error:', err);
     return res.status(500).json({ error: 'Failed to fetch student' });
   }
 });
@@ -57,13 +69,19 @@ router.get('/:id', async (req, res) => {
 // ── POST /api/students
 router.post('/', authorize(...STU_ROLES), async (req, res) => {
   try {
+    const {
+      first_name, last_name, email, phone, date_of_birth, gender, address,
+      guardian_name, guardian_phone, admission_date,
+      batch_id, payment_plan, plan_details
+    } = req.body;
+
     const code = await generateStudentCode();
-    const tempPassword = `${req.body.first_name.toLowerCase()}@${code}`;
+    const tempPassword = `${first_name.toLowerCase()}@${code}`;
     const passwordHash = await bcrypt.hash(tempPassword, 12);
 
     const { data: stuRole } = await supabaseAdmin.from('roles').select('id').eq('name', 'student').single();
     const { data: newUser, error: userErr } = await supabaseAdmin.from('users').insert({
-      email: req.body.email.toLowerCase(),
+      email: email.toLowerCase(),
       password_hash: passwordHash,
       role_id: stuRole.id,
     }).select().single();
@@ -75,23 +93,184 @@ router.post('/', authorize(...STU_ROLES), async (req, res) => {
 
     await supabaseAdmin.from('user_profiles').insert({
       user_id: newUser.id,
-      full_name: `${req.body.first_name} ${req.body.last_name}`,
+      full_name: `${first_name} ${last_name}`,
+      phone: phone || null,
     });
 
-    const { data, error } = await supabaseAdmin.from('students').insert({
-      ...req.body,
+    const { data: student, error: stuErr } = await supabaseAdmin.from('students').insert({
       student_code: code,
       user_id: newUser.id,
-      email: req.body.email.toLowerCase(),
+      first_name,
+      last_name,
+      email: email.toLowerCase(),
+      phone: phone || null,
+      date_of_birth: date_of_birth || null,
+      gender: gender || null,
+      address: address || null,
+      guardian_name: guardian_name || null,
+      guardian_phone: guardian_phone || null,
+      admission_date: admission_date || new Date().toISOString().split('T')[0],
+      status: 'active',
       created_by: req.user.id,
     }).select().single();
-    if (error) { await supabaseAdmin.from('users').delete().eq('id', newUser.id); throw error; }
 
-    await writeAuditLog({ userId: req.user.id, action: 'CREATE', tableName: 'students', recordId: data.id, newData: data, ipAddress: req.ip });
-    return res.status(201).json({ data, message: `Student created. Temp password: ${tempPassword}` });
+    if (stuErr) {
+      await supabaseAdmin.from('users').delete().eq('id', newUser.id);
+      throw stuErr;
+    }
+
+    let enrollment = null;
+    let invoice = null;
+
+    // If batch selected, enroll student
+    if (batch_id) {
+      const { data: enrData, error: enrErr } = await supabaseAdmin.from('enrollments').insert({
+        student_id: student.id,
+        batch_id,
+        status: 'active',
+        enrolled_on: admission_date || new Date().toISOString().split('T')[0],
+      }).select().single();
+
+      if (!enrErr) {
+        enrollment = enrData;
+
+        // If payment plan specified, create invoice with plan details
+        if (plan_details) {
+          const invNumber = `INV-${Date.now()}`;
+          const planMeta = JSON.stringify({
+            plan_key: payment_plan || plan_details.plan_key,
+            plan_name: plan_details.plan_name,
+            base_fee: plan_details.base_fee,
+            gst: plan_details.gst,
+            standard_total: plan_details.standard_total,
+            discount_percent: plan_details.discount_percent,
+            discount_amount: plan_details.discount_amount,
+            net_payable: plan_details.net_payable,
+            monthly_installment: plan_details.monthly_installment,
+            months: plan_details.months,
+            payment_type: plan_details.payment_type || (payment_plan === 'cash' ? 'cash' : 'emi'),
+          });
+
+          const { data: invData } = await supabaseAdmin.from('fee_invoices').insert({
+            student_id: student.id,
+            enrollment_id: enrollment?.id || null,
+            invoice_number: invNumber,
+            total_amount: Number(plan_details.net_payable) || 0,
+            due_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+            status: 'unpaid',
+            description: planMeta,
+            created_by: req.user.id,
+          }).select().single();
+          invoice = invData;
+        }
+      }
+    }
+
+    await writeAuditLog({
+      userId: req.user.id,
+      action: 'CREATE',
+      tableName: 'students',
+      recordId: student.id,
+      newData: { ...student, batch_id, payment_plan },
+      ipAddress: req.ip
+    });
+
+    return res.status(201).json({
+      data: { ...student, enrollment, invoice },
+      message: `Student created successfully. Temp password: ${tempPassword}`
+    });
   } catch (err) {
     logger.error('Create student error:', err);
-    return res.status(500).json({ error: 'Failed to create student' });
+    return res.status(500).json({ error: err?.message || 'Failed to create student' });
+  }
+});
+
+// ── POST /api/students/:id/assign-plan
+router.post('/:id/assign-plan', authorize(...STU_ROLES), async (req, res) => {
+  try {
+    const studentId = req.params.id;
+    const { batch_id, payment_plan, plan_details } = req.body;
+
+    let enrollment = null;
+    if (batch_id) {
+      const { data: existingEnr } = await supabaseAdmin.from('enrollments')
+        .select('id, batch_id')
+        .eq('student_id', studentId)
+        .maybeSingle();
+
+      if (existingEnr) {
+        const { data: updEnr } = await supabaseAdmin.from('enrollments')
+          .update({ batch_id, status: 'active' })
+          .eq('id', existingEnr.id)
+          .select().single();
+        enrollment = updEnr;
+      } else {
+        const { data: newEnr } = await supabaseAdmin.from('enrollments').insert({
+          student_id: studentId,
+          batch_id,
+          status: 'active',
+        }).select().single();
+        enrollment = newEnr;
+      }
+    }
+
+    let invoice = null;
+    if (plan_details) {
+      const planMeta = JSON.stringify({
+        plan_key: payment_plan || plan_details.plan_key,
+        plan_name: plan_details.plan_name,
+        base_fee: plan_details.base_fee,
+        gst: plan_details.gst,
+        standard_total: plan_details.standard_total,
+        discount_percent: plan_details.discount_percent,
+        discount_amount: plan_details.discount_amount,
+        net_payable: plan_details.net_payable,
+        monthly_installment: plan_details.monthly_installment,
+        months: plan_details.months,
+        payment_type: plan_details.payment_type || (payment_plan === 'cash' ? 'cash' : 'emi'),
+      });
+
+      const { data: existingInv } = await supabaseAdmin.from('fee_invoices')
+        .select('id, status')
+        .eq('student_id', studentId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existingInv && existingInv.status === 'unpaid') {
+        const { data: updInv } = await supabaseAdmin.from('fee_invoices')
+          .update({
+            total_amount: Number(plan_details.net_payable) || 0,
+            description: planMeta,
+            enrollment_id: enrollment?.id || null,
+          })
+          .eq('id', existingInv.id)
+          .select().single();
+        invoice = updInv;
+      } else {
+        const invNumber = `INV-${Date.now()}`;
+        const { data: newInv } = await supabaseAdmin.from('fee_invoices').insert({
+          student_id: studentId,
+          enrollment_id: enrollment?.id || null,
+          invoice_number: invNumber,
+          total_amount: Number(plan_details.net_payable) || 0,
+          due_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+          status: 'unpaid',
+          description: planMeta,
+          created_by: req.user.id,
+        }).select().single();
+        invoice = newInv;
+      }
+    }
+
+    return res.json({
+      success: true,
+      data: { enrollment, invoice },
+      message: 'Payment plan and batch assigned successfully'
+    });
+  } catch (err) {
+    logger.error('Assign plan error:', err);
+    return res.status(500).json({ error: err?.message || 'Failed to assign plan' });
   }
 });
 

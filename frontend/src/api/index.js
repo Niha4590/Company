@@ -88,6 +88,7 @@ export const studentApi = {
   batches: (params) => api.get('/students/batches/list', { params }),
   createBatch: (data) => api.post('/students/batches', data),
   enroll: (data) => api.post('/students/enrollments', data),
+  assignPlan: (id, data) => api.post(`/students/${id}/assign-plan`, data),
   invoices: (id) => api.get(`/students/${id}/invoices`),
   createInvoice: (id, data) => api.post(`/students/${id}/invoices`, data),
   recordPayment: (invoiceId, data) => api.post(`/students/invoices/${invoiceId}/payment`, data),
