@@ -1,0 +1,8 @@
+node_modules/
+logs/
+*.log
+startup_log.txt
+test_out.txt
+.env
+.env.*
+!.env.example
