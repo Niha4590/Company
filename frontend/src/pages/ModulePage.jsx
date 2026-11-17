@@ -161,7 +161,12 @@ function StudentsModule() {
   const totalPaid = allPayments.reduce((s, p) => s + Number(p.amount || 0), 0);
   const totalPayable = invoice ? Number(invoice.total_amount) : (plan?.net_payable || 0);
   const balanceDue = Math.max(0, totalPayable - totalPaid);
-  const paymentPct = totalPayable > 0 ? Math.min(100, Math.round((totalPaid / totalPayable) * 100)) : 0;
+  const paymentPct = totalPayable > 0
+    ? (balanceDue === 0 ? 100 : Math.min(99, Math.floor((totalPaid / totalPayable) * 100)))
+    : 0;
+  const paymentPctExact = totalPayable > 0
+    ? (balanceDue === 0 ? '100' : (totalPaid / totalPayable * 100).toFixed(1))
+    : '0';
 
   // Sync changePlanForm when active student changes
   useEffect(() => {
@@ -797,7 +802,7 @@ function StudentsModule() {
                     <span className={`text-[10px] font-bold ${
                       balanceDue === 0 && totalPayable > 0 ? 'text-emerald-700' : 'text-amber-700'
                     }`}>
-                      {balanceDue === 0 && totalPayable > 0 ? '✓ Paid in Full' : `${paymentPct}% paid (${100 - paymentPct}% left)`}
+                      {balanceDue === 0 && totalPayable > 0 ? '✓ Paid in Full' : `₹${balanceDue.toLocaleString()} remaining to clear`}
                     </span>
                   </div>
                 </div>
@@ -806,12 +811,12 @@ function StudentsModule() {
                 <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5 text-xs">
                   <div className="flex items-center justify-between font-bold">
                     <span className="text-slate-700">Fee Payment Progress</span>
-                    <span className="text-blue-700">{paymentPct}% Paid</span>
+                    <span className="text-blue-700">{balanceDue === 0 ? '100% Paid' : `${paymentPctExact}% Paid`}</span>
                   </div>
                   <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
                     <div
                       className="bg-gradient-to-r from-blue-500 to-emerald-500 h-full rounded-full transition-all duration-500"
-                      style={{ width: `${paymentPct}%` }}
+                      style={{ width: `${balanceDue === 0 ? 100 : Math.min(100, Math.max(0, (totalPaid / totalPayable) * 100))}%` }}
                     />
                   </div>
                   <div className="flex justify-between text-slate-600 font-semibold pt-0.5 text-[11px]">

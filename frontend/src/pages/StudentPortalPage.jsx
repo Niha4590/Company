@@ -50,7 +50,12 @@ export default function StudentPortalPage() {
   const totalPaid = allPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
   const totalPayable = latestInvoice ? Number(latestInvoice.total_amount) : (plan?.net_payable || computedFallback?.total || 0);
   const balanceDue = Math.max(0, totalPayable - totalPaid);
-  const paymentPercentage = totalPayable > 0 ? Math.min(100, Math.round((totalPaid / totalPayable) * 100)) : 0;
+  const paymentPercentage = totalPayable > 0
+    ? (balanceDue === 0 ? 100 : Math.min(99, Math.floor((totalPaid / totalPayable) * 100)))
+    : 0;
+  const paymentPctExact = totalPayable > 0
+    ? (balanceDue === 0 ? '100' : (totalPaid / totalPayable * 100).toFixed(1))
+    : '0';
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
@@ -329,7 +334,7 @@ export default function StudentPortalPage() {
                 <span className={`text-[11px] font-bold ${
                   balanceDue === 0 && totalPayable > 0 ? 'text-emerald-700' : 'text-amber-700'
                 }`}>
-                  {balanceDue === 0 && totalPayable > 0 ? '✓ All Fees Paid' : `${paymentPercentage}% paid (${100 - paymentPercentage}% left)`}
+                  {balanceDue === 0 && totalPayable > 0 ? '✓ All Fees Paid' : `₹${balanceDue.toLocaleString()} remaining to clear`}
                 </span>
               </div>
             </div>
@@ -338,12 +343,12 @@ export default function StudentPortalPage() {
             <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
               <div className="flex items-center justify-between text-xs font-bold">
                 <span className="text-slate-700">Fee Payment Progress</span>
-                <span className="text-blue-700">{paymentPercentage}% Paid</span>
+                <span className="text-blue-700">{balanceDue === 0 ? '100% Paid' : `${paymentPctExact}% Paid`}</span>
               </div>
               <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
                 <div
                   className="bg-gradient-to-r from-blue-500 to-emerald-500 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${paymentPercentage}%` }}
+                  style={{ width: `${balanceDue === 0 ? 100 : Math.min(100, Math.max(0, (totalPaid / totalPayable) * 100))}%` }}
                 />
               </div>
               <div className="flex justify-between text-xs text-slate-500 pt-1">
